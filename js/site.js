@@ -49,31 +49,46 @@ function mapArt() {
 }
 
 /* ---------- partials ---------- */
-const navItems = () => [['about', 'nav_about'], ['incubator', 'nav_incubator'], ['accelerator', 'nav_accelerator'], ['spaces', 'nav_spaces'], ['services', 'nav_services'], ['opportunities', 'nav_opps'], ['events', 'nav_events'], ['contact', 'nav_contact']];
+const navItems = () => [['about', 'nav_about'], ['incubator', 'nav_incubator'], ['accelerator', 'nav_accelerator'], ['workspaces', 'nav_spaces'], ['services', 'nav_services'], ['opportunities', 'nav_opps'], ['events', 'nav_events'], ['contact', 'nav_contact']];
 const sec = (k) => S.content.sections[k] || {};
 function secHead(k, extra = '') {
   const s = sec(k);
   return `<div class="sec-head"><div><div class="kicker">${esc(L(s.kicker))}</div><h2>${esc(L(s.title))}</h2>${s.text ? `<p>${esc(L(s.text))}</p>` : ''}</div>${extra}</div>`;
 }
+function acctMenuHTML(cu, co) {
+  const items = [['home', 'grid', tt('لوحة التحكم', 'Dashboard')], ['bookings', 'calendar', tt('حجوزاتي', 'My bookings')], ['invoices', 'doc', tt('الفواتير', 'Invoices')],
+    ['contracts', 'contract', tt('العقود', 'Contracts')], ['company', 'office', tt('بيانات الشركة', 'Company details')], ['profile', 'shield', tt('الملف الشخصي والأمان', 'Profile & security')]];
+  return `<div class="acct"><button class="acct-btn" data-act="acct-menu" aria-haspopup="menu" aria-expanded="false"><span class="av">${esc(initials(cu.name))}</span>
+    <span class="acct-txt"><b>${esc(cu.name)}</b><small>${esc(companyName(co))}</small></span>${ic('back', 'chev')}</button>
+    <div class="acct-menu" role="menu" hidden><div class="acct-head"><b>${esc(cu.name)}</b><span class="ltr">${esc(cu.email)}</span><span>${esc(companyName(co))} · ${esc(L(COMPANY_ROLES[cu.companyRole]))}</span></div>
+    ${items.map(([k, i, l]) => `<a role="menuitem" href="#portal" data-act="p-go" data-k="${k}">${ic(i)}<span>${esc(l)}</span>${k === 'invoices' && co && companyInvoices(co.id).some(x => invStatus(x) === 'overdue') ? '<span class="dot-b" aria-label="!"></span>' : ''}</a>`).join('')}
+    <button role="menuitem" class="danger" data-act="p-out">${ic('logout')}<span>${esc(t('sign_out'))}</span></button></div></div>`;
+}
 function headerHTML() {
+  const cu = portalUser(); const co = cu ? portalCompany() : null; const unread = cu ? cu.notifs.filter(n => !n.read).length : 0;
+  const cta = cu ? `<button class="btn btn-gold btn-sm" data-act="p-go" data-k="book">${ic('calendar')}${esc(tt('احجز مساحة', 'Book a space'))}</button>` : `<button class="btn btn-gold btn-sm" data-act="apply">${esc(t('apply'))}</button>`;
   return `<div class="topline"><div class="wrap topline-in"><div class="tl-info">${esc(t(VIEW_ONLY ? 'view_bar' : 'demo_bar'))} <a href="#admin">${esc(t('demo_admin'))}</a>·<a href="#portal">${esc(t('demo_portal'))}</a>${VIEW_ONLY ? '' : `·<button class="lk" data-act="reset-data">${esc(t('demo_reset'))}</button>`}</div>
-    <div class="tl-tools"><button class="tbtn" data-act="lang" lang="${isEn() ? 'ar' : 'en'}" aria-label="${isEn() ? 'العربية' : 'English'}">${ic('globe')}${isEn() ? 'العربية' : 'English'}</button>
+    <div class="tl-tools"><button class="tbtn" data-act="lang" lang="${isEn() ? 'ar' : 'en'}" aria-label="${isEn() ? 'العربية' : 'English'}">${ic('globe')}${isEn() ? 'ع' : 'EN'}</button>
       <button class="tbtn" data-act="toggle-theme" aria-label="${esc(t('theme'))}" title="${esc(t('theme'))}">${ic(currentDark() ? 'sun' : 'moon')}</button>
-      <button class="tbtn" data-act="login-choice">${ic('user')}${esc(t('login'))}</button></div></div></div>
-  <header class="site-header" id="top"><div class="wrap nav">
+      ${cu ? `<a class="tbtn" href="#portal" data-act="p-go" data-k="notifs" aria-label="${esc(tt('الإشعارات', 'Notifications'))}">${ic('bell')}${unread ? `<span class="tb-dot">${unread}</span>` : ''}</a>`
+           : `<a class="tbtn" href="#login">${ic('user')}${esc(t('login'))}</a>`}</div></div></div>
+  <header class="site-header ${cu ? 'has-acct' : ''}" id="top"><div class="wrap nav">
     <a class="brand" href="#" data-act="to-top" aria-label="${esc(L(S.settings.name))}"><span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">${esc(L(S.settings.name))}<small>${esc(L(S.settings.tagline))}</small></span></a>
-    <ul class="nav-links"><li><a href="#" data-act="to-top">${esc(t('nav_home'))}</a></li>${navItems().map(([id, k]) => `<li><a href="#${id}">${esc(t(k))}</a></li>`).join('')}</ul>
-    <div class="nav-tools">
-      <button class="btn btn-gold btn-sm" data-act="apply">${esc(t('apply'))}</button>
+    <ul class="nav-links"><li><a href="#" data-act="to-top">${esc(t('nav_home'))}</a></li>${navItems().map(([id, k]) => `<li><a href="#${id}" class="${UI.view === id ? 'active' : ''}">${esc(t(k))}</a></li>`).join('')}</ul>
+    <div class="nav-tools">${cu ? acctMenuHTML(cu, co) : ''}${cta}
       <button class="icon-btn menu-btn" data-act="drawer" aria-label="${esc(t('menu'))}" aria-expanded="false">${ic('menu')}</button>
     </div></div></header>
+  ${cu ? `<button class="btn btn-gold apply-float" data-act="p-go" data-k="book" aria-hidden="true" tabindex="-1">${ic('calendar')}${esc(tt('احجز مساحة', 'Book a space'))}</button>` : `<button class="btn btn-gold apply-float" data-act="apply" aria-hidden="true" tabindex="-1">${esc(t('apply'))} ${ic('arrow')}</button>`}
   <div class="drawer" id="drawer"><div class="drawer-backdrop" data-act="drawer"></div><nav class="drawer-panel" aria-label="${esc(t('menu'))}">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span class="brand"><span class="brand-mark"></span><span class="brand-name">${esc(L(S.settings.name))}</span></span>
     <button class="icon-btn" data-act="drawer" aria-label="${esc(t('close'))}">${ic('close')}</button></div>
+    ${cu ? `<div class="notice" style="margin-bottom:6px">${ic('user')}<div><b>${esc(cu.name)}</b><br><span class="muted">${esc(companyName(co))}</span></div></div>
+      <a class="dl" href="#portal" data-act="p-go" data-k="home">${esc(tt('لوحة التحكم', 'Dashboard'))}</a><a class="dl" href="#portal" data-act="p-go" data-k="bookings">${esc(tt('حجوزاتي', 'My bookings'))}</a><a class="dl" href="#portal" data-act="p-go" data-k="invoices">${esc(tt('الفواتير', 'Invoices'))}</a><hr style="border:0;border-top:1px solid var(--line);width:100%">` : ''}
     <a class="dl" href="#" data-act="drawer-top">${esc(t('nav_home'))}</a>
     ${navItems().map(([id, k]) => `<a class="dl" href="#${id}" data-act="drawer-go" data-to="${id}">${esc(t(k))}</a>`).join('')}
-    <div style="display:grid;gap:8px;margin-top:14px"><button class="btn btn-ghost" data-act="login-choice">${ic('user')} ${esc(t('login'))}</button><button class="btn btn-gold" data-act="apply">${esc(t('apply'))}</button>
+    <div style="display:grid;gap:8px;margin-top:14px">${cu ? `<button class="btn btn-ghost" data-act="p-out">${ic('logout')} ${esc(t('sign_out'))}</button>` : `<a class="btn btn-ghost" href="#login">${ic('user')} ${esc(t('login'))}</a>`}${cta.replace('btn-sm', '')}
+    <div class="seg" style="justify-self:start"><button data-act="lang">${isEn() ? 'العربية' : 'English'}</button><button data-act="toggle-theme">${ic(currentDark() ? 'sun' : 'moon')}</button></div>
     <p class="muted" style="font-size:12.5px;margin-top:8px">${esc(t(VIEW_ONLY ? 'view_bar' : 'demo_bar'))} <a href="#admin">${esc(t('demo_admin'))}</a> · <a href="#portal">${esc(t('demo_portal'))}</a></p></div></nav></div>`;
 }
 function heroHTML() {
@@ -115,16 +130,27 @@ function programHTML(key, dark) {
   </div></section>`;
 }
 const unitLabel = (u) => t(u === 'hour' ? 'hour' : u === 'day' ? 'day' : 'month');
-function spacesHTML() {
-  return `<section class="block alt" id="spaces"><div class="wrap">${secHead('spaces')}<div class="grid g4">
-    ${S.content.packages.map(p => `<article class="card hov price-card ${p.featured ? 'featured' : ''}">${p.featured ? `<span class="chip badge">${esc(t('featured'))}</span>` : ''}
-      <div class="ic">${ic(p.icon)}</div><h3>${esc(L(p.name))}</h3><p class="desc">${esc(L(p.desc))}</p>
-      <div class="price"><b class="num">${money(p.price)}</b><span>${esc(t('sar'))} ${t('per')} ${esc(unitLabel(p.unit))}</span></div>
-      <span class="muted" style="font-size:13px;margin-top:-8px">${esc(L(p.alt))}</span>
-      <ul>${p.feats.map(f => `<li>${esc(L(f))}</li>`).join('')}</ul>
-      <button class="btn ${p.featured ? 'btn-gold' : 'btn-ghost'}" data-act="open-form" data-form="booking" data-res="${esc(p.resource)}" data-unit="${esc(p.unit)}">${esc(t('book_now'))}</button></article>`).join('')}
-    </div></div></section>`;
+function pricingCTA(p, cls) {
+  const r = resById(p.resource); const cu = portalUser();
+  if (cu && r && r.kind === 'room') return `<button class="btn ${cls}" data-act="p-go" data-k="book" data-res="${r.id}">${ic('calendar')}${esc(tt('احجز أونلاين', 'Book online'))}</button>`;
+  return `<button class="btn ${cls}" data-act="open-form" data-form="quote" data-kind="${esc(r ? r.kind : '')}" data-months="${UI.pm || 1}">${esc(tt('اطلب عرض سعر', 'Request a quote'))}</button>`;
 }
+function spacesHTML() {
+  const m = UI.pm || 1; const d = durDisc(m);
+  return `<section class="block alt" id="spaces"><div class="wrap">${secHead('spaces', `<a class="btn btn-ghost" href="#workspaces">${esc(tt('كل المساحات والأسعار', 'All spaces & prices'))} ${ic('arrow')}</a>`)}
+    <div class="toolbar" style="margin:-18px 0 26px" role="group" aria-label="${esc(tt('مدة الاشتراك', 'Subscription length'))}"><span class="muted" style="font-size:14px">${esc(tt('مدة الاشتراك:', 'Subscription:'))}</span>
+      <div class="seg">${DURATIONS.map(([v, ar, en]) => `<button class="${m === v ? 'on' : ''}" data-act="pm" data-m="${v}" aria-pressed="${m === v}">${esc(isEn() ? en : ar)}${durDisc(v) ? ` <small class="disc ltr">−${durDisc(v)}%</small>` : ''}</button>`).join('')}</div></div>
+    <div class="grid g4">
+    ${S.content.packages.map(p => { const monthly = p.unit === 'month'; const price = monthly ? monthlyAfterDuration(p.price, m) : p.price;
+      return `<article class="card hov price-card ${p.featured ? 'featured' : ''}">${p.featured ? `<span class="chip badge">${esc(t('featured'))}</span>` : ''}
+      <div class="ic">${ic(p.icon)}</div><h3>${esc(L(p.name))}</h3><p class="desc">${esc(L(p.desc))}</p>
+      <div class="price"><b class="num">${money(price)}</b><span>${esc(t('sar'))} ${t('per')} ${esc(unitLabel(p.unit))}</span>${monthly && d ? `<s class="muted num" style="font-size:14px">${money(p.price)}</s>` : ''}</div>
+      <span class="muted" style="font-size:13px;margin-top:-8px">${monthly && m > 1 ? esc(tt(`الإجمالي ${money(price * m)} ر.س لمدة ${m} أشهر — خصم ${d}%`, `Total ${money(price * m)} SAR for ${m} months — ${d}% off`)) : esc(L(p.alt))}</span>
+      <ul>${p.feats.map(f => `<li>${esc(L(f))}</li>`).join('')}</ul>
+      ${pricingCTA(p, p.featured ? 'btn-gold' : 'btn-ghost')}</article>`; }).join('')}
+    </div><p class="muted" style="font-size:13px;margin-top:16px">${esc(tt('الأسعار غير شاملة ضريبة القيمة المضافة 15%. أسعار القاعات بالساعة لا تتغير بمدة الاشتراك.', 'Prices exclude 15% VAT. Hourly room prices do not change with subscription length.'))}</p></div></section>`;
+}
+ACT['pm'] = (el) => { UI.pm = +el.dataset.m; const sec = $('#spaces'); if (sec) { sec.outerHTML = spacesHTML(); lockUI($('#spaces')); } };
 function servicesHTML() {
   return `<section class="block" id="services"><div class="wrap">${secHead('services')}<div class="grid g3">
     ${S.content.services.map(s => `<article class="card hov svc"><div class="ic">${ic(s.icon)}</div><h3>${esc(L(s.name))}</h3><p>${esc(L(s.text))}</p>
@@ -186,10 +212,10 @@ function footerHTML() {
       <div class="socials">${[['x', 'X'], ['instagram', 'IG'], ['linkedin', 'in'], ['snapchat', 'SC']].filter(([k]) => soc[k]).map(([k, lb]) => `<a href="${esc(soc[k])}" target="_blank" rel="noopener" aria-label="${k}" style="font-weight:700;font-size:13px">${lb}</a>`).join('')}</div></div>
     <div><h4>${esc(t('quick_links'))}</h4>${navItems().slice(0, 5).map(([id, k]) => `<a href="#${id}">${esc(t(k))}</a>`).join('')}</div>
     <div><h4>${esc(t('programs'))}</h4><a href="#" data-act="open-form" data-form="incubator">${esc(t('apply_incubator'))}</a><a href="#" data-act="open-form" data-form="accelerator">${esc(t('apply_accelerator'))}</a>
-      <a href="#" data-act="open-form" data-form="opportunity">${esc(t('submit_project'))}</a><a href="#" data-act="open-form" data-form="investor">${esc(t('invest_interest'))}</a><a href="#portal">${esc(t('portal'))}</a></div>
+      <a href="#" data-act="open-form" data-form="opportunity">${esc(t('submit_project'))}</a><a href="#" data-act="open-form" data-form="investor">${esc(t('invest_interest'))}</a><a href="#register">${esc(tt('سجّل منشأتك', 'Register your company'))}</a><a href="#portal">${esc(t('portal'))}</a></div>
     <div><h4>${esc(t('nav_contact'))}</h4><a href="tel:${esc(st.phone.replace(/\s/g, ''))}" class="ltr" style="text-align:start">${esc(st.phone)}</a><a href="mailto:${esc(st.email)}">${esc(st.email)}</a><span style="font-size:14px">${esc(L(st.hours))}</span></div>
     </div><div class="foot-bottom"><span>© ${new Date().getFullYear()} ${esc(L(st.name))} — ${esc(t('rights'))}</span>
-    <span><a href="#" data-act="policy" data-k="privacy" style="display:inline">${esc(t('privacy'))}</a> · <a href="#" data-act="policy" data-k="terms" style="display:inline">${esc(t('terms'))}</a></span></div></div></footer>
+    <span><a href="#privacy" style="display:inline">${esc(t('privacy'))}</a> · <a href="#terms" style="display:inline">${esc(t('terms'))}</a></span></div></div></footer>
   <a class="wa" href="https://wa.me/${esc(st.whatsapp)}" target="_blank" rel="noopener" aria-label="WhatsApp">${ic('whatsapp')}</a>`;
 }
 
@@ -224,41 +250,34 @@ function startCounters() {
   els.forEach(e => io.observe(e));
 }
 function bindHeader() {
-  const h = $('.site-header'); const on = () => h && h.classList.toggle('scrolled', scrollY > 10);
-  window.onscroll = on; on();
+  const h = $('.site-header'); const f = $('.apply-float');
+  document.body.classList.remove('has-capsule'); if (h) document.documentElement.style.setProperty('--hdr-h', h.offsetHeight + 'px');
+  const on = () => { if (!h) return; const y = scrollY; h.classList.toggle('scrolled', y > 10); const cap = y > 160; h.classList.toggle('capsule', cap); document.body.classList.toggle('has-capsule', cap); if (f) { f.classList.toggle('show', cap); f.setAttribute('aria-hidden', cap ? 'false' : 'true'); f.tabIndex = cap ? 0 : -1; } };
+  window.onscroll = on; on(); requestAnimationFrame(on); setTimeout(on, 120);
   const secs = navItems().map(([id]) => document.getElementById(id)).filter(Boolean);
-  if ('IntersectionObserver' in window) {
+  if ('IntersectionObserver' in window && secs.length) {
     const io = new IntersectionObserver((ents) => ents.forEach(en => { if (en.isIntersecting) $$('.nav-links a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + en.target.id)); }), {rootMargin:'-45% 0px -50% 0px'});
     secs.forEach(s => io.observe(s));
   }
 }
+ACT['acct-menu'] = (el) => { const m = el.parentElement.querySelector('.acct-menu'); const open = m.hidden; m.hidden = !open; el.setAttribute('aria-expanded', open); if (open) setTimeout(() => document.addEventListener('click', function off(e) { if (!e.target.closest('.acct')) { m.hidden = true; el.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', off); } }), 0); };
 ACT['slide'] = (el) => { showSlide(+el.dataset.i); startSlider(); };
 ACT['slide-next'] = () => { showSlide(slideIdx + (isEn() ? 1 : 1)); startSlider(); };
 ACT['slide-prev'] = () => { showSlide(slideIdx - 1); startSlider(); };
-ACT['lang'] = () => { S.lang = isEn() ? 'ar' : 'en'; save(); const y = scrollY; applyLangDir(); if (UI.view === 'portal') renderPortal(); else { renderSite(); window.scrollTo(0, y); } };
+ACT['lang'] = () => { S.lang = isEn() ? 'ar' : 'en'; const cu = portalUser(); if (cu) cu.lang = S.lang; save(); const y = scrollY; applyLangDir(); if (UI.view === 'portal') renderPortal(); else if (UI.view !== 'site') renderPage(UI.view); else { renderSite(); window.scrollTo(0, y); } };
 ACT['to-top'] = () => { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* sandboxed */ } window.scrollTo({top:0, behavior:'smooth'}); };
 ACT['drawer'] = () => { const d = $('#drawer'); d.classList.toggle('open'); $('.menu-btn')?.setAttribute('aria-expanded', d.classList.contains('open')); };
 ACT['drawer-top'] = () => { $('#drawer').classList.remove('open'); ACT['to-top'](); };
 ACT['drawer-go'] = (el) => { $('#drawer').classList.remove('open'); location.hash = el.dataset.to; document.getElementById(el.dataset.to)?.scrollIntoView({behavior:'smooth'}); };
 ACT['lightbox'] = (el) => { const g = S.content.gallery[+el.dataset.i]; openModal({title:esc(L(g.cap)), size:'wide', body:`<div class="art-box" style="border-radius:16px;overflow:hidden;aspect-ratio:4/3;background:var(--night)">${g.img ? `<img src="${g.img}" alt="" style="width:100%;height:100%;object-fit:cover">` : galleryArt(g.art)}</div><p class="muted" style="margin-top:10px;font-size:13px">${esc(t('gallery_note'))}</p>`}); };
-ACT['policy'] = (el) => {
-  const pr = el.dataset.k === 'privacy';
-  openModal({title:esc(t(pr ? 'privacy' : 'terms')), body:`<div style="display:grid;gap:12px;color:var(--muted)">${pr
-    ? (isEn() ? '<p>We collect only the data needed to process your request: name, contact details and what you submit in the form.</p><p>Data is processed under the Saudi Personal Data Protection Law (PDPL). You may request access, correction or deletion at any time by email.</p><p>Draft text — to be reviewed by legal counsel before launch.</p>'
-              : '<p>نجمع البيانات اللازمة لمعالجة طلبك فقط: الاسم وبيانات التواصل وما ترسله في النموذج.</p><p>تُعالَج البيانات وفق نظام حماية البيانات الشخصية في المملكة، ويحق لك طلب الاطلاع عليها أو تصحيحها أو حذفها في أي وقت عبر البريد الإلكتروني.</p><p>نص مبدئي — يُراجَع من مستشار قانوني قبل الإطلاق.</p>')
-    : (isEn() ? '<p>Bookings are subject to availability and the cancellation policy. Programs have their own admission criteria.</p><p>Draft text — to be reviewed before launch.</p>'
-              : '<p>تخضع الحجوزات للتوفر وسياسة الإلغاء، ولكل برنامج شروط قبول خاصة به.</p><p>نص مبدئي — يُراجَع قبل الإطلاق.</p>')}</div>`});
-};
-ACT['login-choice'] = () => {
-  $('#drawer')?.classList.remove('open');
-  openModal({title:esc(t('login_as')), body:`<div class="choices">
-    <button class="choice" data-act="go" data-to="portal"><span class="ic">${ic('user')}</span><div><b>${esc(t('login_client'))}</b><span>${esc(t('login_client_sub'))}</span></div></button>
-    <button class="choice" data-act="go" data-to="admin"><span class="ic">${ic('key')}</span><div><b>${esc(t('login_admin'))}</b><span>${esc(t('login_admin_sub'))}</span></div></button></div>`});
-};
+ACT['policy'] = (el) => { closeModal(); location.hash = el.dataset.k === 'privacy' ? 'privacy' : 'terms'; };
+ACT['login-choice'] = () => { $('#drawer')?.classList.remove('open'); location.hash = 'login'; };
 ACT['apply'] = () => {
   $('#drawer')?.classList.remove('open');
-  const opts = ['incubator', 'accelerator', 'booking', 'event', 'opportunity', 'investor', 'contact'];
-  openModal({title:esc(t('choose_form')), sub:esc(t('choose_form_sub')), body:`<div class="choices">${opts.map(k => `<button class="choice" data-act="open-form" data-form="${k}"><span class="ic">${ic(FORMS[k].icon)}</span><div><b>${esc(FORMS[k][curLang()])}</b><span>${esc(L(FORMS[k].sub))}</span></div></button>`).join('')}</div>`});
+  const opts = ['quote', 'visit', 'incubator', 'accelerator', 'event', 'opportunity', 'investor', 'contact'];
+  openModal({title:esc(t('choose_form')), sub:esc(t('choose_form_sub')), body:`<div class="choices">
+    <a class="choice" href="#register" data-act="go" data-to="register"><span class="ic">${ic('office')}</span><div><b>${esc(tt('سجّل منشأتك', 'Register your company'))}</b><span>${esc(tt('حساب لشركتك لحجز القاعات أونلاين ومتابعة العقود والفواتير.', 'A company account to book rooms online and follow contracts and invoices.'))}</span></div></a>
+    ${opts.map(k => `<button class="choice" data-act="open-form" data-form="${k}"><span class="ic">${ic(FORMS[k].icon)}</span><div><b>${esc(FORMS[k][curLang()])}</b><span>${esc(L(FORMS[k].sub))}</span></div></button>`).join('')}</div>`});
 };
 
 /* ---------- forms ---------- */
@@ -267,6 +286,9 @@ function optList(src) {
   if (src === 'sectors') return Object.entries(SECTORS).map(([k, v]) => [k, L(v)]);
   if (src === 'sources') return Object.entries(SOURCES).filter(([k]) => k !== 'web').map(([k, v]) => [k, L(v)]);
   if (src === 'resources') return S.resources.map(r => [r.id, `${L(r.name)} — ${isEn() ? 'up to' : 'حتى'} ${r.cap}`]);
+  if (src === 'branches') return S.branches.map(b => [b.id, branchName(b.id)]);
+  if (src === 'kinds') return Object.entries(SPACE_KINDS).map(([k, v]) => [k, L(v)]);
+  if (src === 'durations') return DURATIONS.map(([v, ar, en]) => [String(v), (isEn() ? en : ar) + (durDisc(v) ? (isEn() ? ` (${durDisc(v)}% off)` : ` — خصم ${durDisc(v)}٪`) : '')]);
   if (src === 'events') return S.content.events.filter(e => e.status === 'published').map(e => [e.id, `${L(e.title)} — ${fmtDate(e.date)}`]);
   if (src === 'opportunities') return S.content.opportunities.filter(o => o.status === 'published').map(o => [o.id, L(o.name)]);
   return [];
@@ -302,13 +324,19 @@ function formHTML(type, {preset = {}, compact = false} = {}) {
 }
 ACT['open-form'] = (el) => {
   $('#drawer')?.classList.remove('open');
-  const type = el.dataset.form; const def = FORMS[type]; if (!def) return;
+  const type = el.dataset.form; if (type === 'register') { closeModal(); location.hash = 'register'; return; } const def = FORMS[type]; if (!def) return;
   const preset = {};
   if (el.dataset.res) preset.resource = el.dataset.res;
   if (el.dataset.unit) preset.unit = el.dataset.unit;
   if (el.dataset.event) preset.event = el.dataset.event;
   if (el.dataset.opp) preset.opp = el.dataset.opp;
   if (el.dataset.topic) preset.topic = el.dataset.topic;
+  const cu = portalUser(); if (cu) Object.assign(preset, {name:cu.name, phone:cu.phone, email:cu.email, company:companyName(portalCompany())});
+  if (el.dataset.kind) preset.kind = el.dataset.kind;
+  if (el.dataset.months) preset.months = el.dataset.months;
+  if (el.dataset.branch) preset.branch = el.dataset.branch;
+  if (type === 'quote' || type === 'visit') { preset.branch = preset.branch || 'main'; preset.people = preset.people || 1; }
+  if (type === 'visit') { preset.date = bookableDays()[1] || today(); }
   if (type === 'booking') { preset.unit = preset.unit || 'hour'; preset.people = preset.people || 1; const d = new Date(); d.setDate(d.getDate() + 1); preset.date = d.toISOString().slice(0, 10); preset.start = '10:00'; preset.end = '11:00'; preset.months = 1; }
   if (S.portal) { const c = S.customers.find(x => x.id === S.portal); if (c) Object.assign(preset, {name:c.name, phone:c.phone, email:c.email}); }
   openModal({title:esc(def[curLang()]), sub:esc(L(def.sub)), body:formHTML(type, {preset}), onMount:(m) => bindForm(m.querySelector('form'))});
@@ -360,6 +388,7 @@ function submitForm(form) {
   });
   if (v.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.email)) bad('email', t('invalid_email'));
   if (v.phone && !/^(05\d{8}|\+?9665\d{8})$/.test(v.phone.replace(/[\s-]/g, ''))) bad('phone', t('invalid_phone'));
+  if (type === 'visit' && v.date) { if (v.date < today()) bad('date', t('past_date')); else if (!isWorkday(v.date)) bad('date', tt('اختر يوم عمل — لا زيارات يومي الجمعة والسبت والإجازات الرسمية', 'Choose a working day — no visits on Fri, Sat or public holidays')); }
   if (type === 'booking' && v.resource && v.date) {
     const r = resById(v.resource); const {start, end} = bookingRange(v);
     if (v.unit === 'hour' && !(v.end > v.start)) bad('end', t('end_after_start'));
@@ -378,7 +407,7 @@ function submitForm(form) {
   setTimeout(() => {
     v.phone = v.phone.replace(/[\s-]/g, '');
     const files = v.deck ? [v.deck] : [];
-    const r = createRequest(type, v, files);
+    const cu = portalUser(); const r = createRequest(type, v, files, cu ? {companyId:cu.companyId, customerId:cu.id} : {});
     const inModal = !!form.closest('.modal');
     const html = `<div class="success"><div class="tick">${ic('check')}</div><h3 style="font-size:24px">${esc(t('success_title'))}</h3><p class="muted">${esc(t('success_body'))}</p>
       <div class="ref">${r.id}</div>${r.data.waitlist ? `<span class="chip warn">${esc(t('waitlist'))}</span>` : ''}<p class="muted" style="font-size:13.5px">${esc(t('success_mail'))}</p>

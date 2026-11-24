@@ -155,6 +155,14 @@ const REQ_TYPES = {
   incubator:  {ar:'انضمام للحاضنة', en:'Incubator application', icon:'sprout'},
   accelerator:{ar:'التقديم على المسرّعة', en:'Accelerator application', icon:'rocket'},
   booking:    {ar:'حجز مساحة أو قاعة', en:'Space / room booking', icon:'calendar'},
+  quote:      {ar:'طلب عرض سعر', en:'Quote request', icon:'tag', team:'sales'},
+  visit:      {ar:'حجز زيارة', en:'Visit booking', icon:'pin', team:'sales'},
+  register:   {ar:'تسجيل منشأة جديدة', en:'New company registration', icon:'office', team:'sales'},
+  renewal:    {ar:'طلب تجديد عقد', en:'Contract renewal', icon:'refresh', team:'sales'},
+  contract_change:{ar:'تعديل العقد', en:'Contract change', icon:'contract', team:'sales'},
+  early_term: {ar:'إنهاء مبكر', en:'Early termination', icon:'ban', team:'sales'},
+  extra_service:{ar:'خدمة إضافية', en:'Additional service', icon:'plus', team:'ops'},
+  maintenance:{ar:'صيانة', en:'Maintenance', icon:'gear', team:'ops'},
   event:      {ar:'تسجيل في دورة/فعالية', en:'Course / event registration', icon:'ticket'},
   opportunity:{ar:'تقديم فرصة استثمارية', en:'Investment opportunity', icon:'brief'},
   investor:   {ar:'اهتمام مستثمر', en:'Investor interest', icon:'coins'},
@@ -169,9 +177,15 @@ const REQ_STATUS = {
   done:{ar:'مكتمل', en:'Completed', cls:'ok'}
 };
 const CRM_STATUS = {
-  new:{ar:'جديد', cls:'info'}, followed:{ar:'تمت متابعته', cls:'plain'}, interested:{ar:'مهتم', cls:'warn'},
-  booked:{ar:'حجز', cls:'gold'}, contracted:{ar:'تعاقد', cls:'ok'}, lost:{ar:'غير مهتم', cls:'bad'}
+  new:{ar:'جديد', cls:'info'}, assigned:{ar:'مُسند', cls:'plain'}, contacted:{ar:'تم التواصل', cls:'warn'},
+  deal:{ar:'صفقة', cls:'gold'}, won:{ar:'تعاقد', cls:'ok'}, lost:{ar:'مغلق', cls:'bad'}
 };
+const LOST_REASONS = [['price','السعر أعلى من الميزانية'],['location','الموقع غير مناسب'],['space','لا تتوفر المساحة المطلوبة'],['competitor','اختار منافسًا'],['postponed','أجّل القرار'],['no_reply','لا يرد'],['other','سبب آخر']];
+const SPACE_KINDS = {
+  office:{ar:'مكتب مقفل', en:'Private office'}, shared:{ar:'مكتب مشترك', en:'Shared office'}, desk:{ar:'مكتب مرن', en:'Flexible desk'},
+  virtual:{ar:'مكتب افتراضي', en:'Virtual office'}, room:{ar:'غرفة اجتماعات', en:'Meeting room'}
+};
+const DURATIONS = [[1,'شهري','Monthly'],[3,'3 أشهر','3 months'],[6,'6 أشهر','6 months'],[12,'سنة كاملة','Full year']];
 const SOURCES = {
   ad:{ar:'إعلان', en:'Advertisement'}, whatsapp:{ar:'واتساب', en:'WhatsApp'}, visit:{ar:'زيارة', en:'Walk-in visit'},
   referral:{ar:'معرفة', en:'Referral'}, social:{ar:'منصة اجتماعية', en:'Social media'}, web:{ar:'الموقع', en:'Website'}
@@ -197,13 +211,15 @@ const FORMS = {
       F('revenue','الإيرادات الشهرية التقريبية','Approx. monthly revenue','select',{req:1, half:1, opts:[['r0','أقل من 10 آلاف ر.س','Under 10K SAR'],['r1','10 – 50 ألف ر.س','10K – 50K SAR'],['r2','50 – 200 ألف ر.س','50K – 200K SAR'],['r3','أكثر من 200 ألف ر.س','Over 200K SAR']]}),
       F('team','حجم الفريق','Team size','number',{half:1, min:1}), F('website','رابط الموقع أو التطبيق','Website or app link','url',{opt:1}),
       F('needs','ما الذي تحتاجه من المسرّعة؟','What do you need from the accelerator?','textarea',{req:1}), F('deck','العرض التقديمي','Pitch deck','file',{opt:1}), SRC_FIELD]},
-  booking:{icon:'calendar', ar:'حجز مساحة عمل أو قاعة اجتماعات', en:'Book a workspace or meeting room', sub:{ar:'يتحقق النظام من توفّر الوقت مباشرة ويمنع الحجز المكرر.', en:'Availability is checked instantly; double bookings are blocked.'},
-    fields:[...COMMON_HEAD, F('resource','المساحة','Space','select',{req:1, opts:'resources'}),
-      F('unit','مدة الحجز','Booking by','select',{req:1, half:1, opts:[['hour','بالساعة','By the hour'],['day','باليوم','By the day'],['month','بالشهر','By the month']]}),
-      F('people','عدد الأشخاص','Number of people','number',{req:1, half:1, min:1}),
-      F('date','التاريخ','Date','date',{req:1, half:1}), F('start','من الساعة','From','time',{half:1, unitOnly:'hour'}), F('end','إلى الساعة','To','time',{half:1, unitOnly:'hour'}),
-      F('months','عدد الأشهر','Number of months','number',{half:1, min:1, unitOnly:'month'}),
-      F('code','كود الخصم','Discount code','text',{opt:1, half:1}), F('notes','ملاحظات','Notes','textarea',{opt:1}), SRC_FIELD]},
+  quote:{icon:'tag', ar:'طلب عرض سعر لمساحة عمل', en:'Request a workspace quote', sub:{ar:'نرسل لك عرض سعر مفصّلًا خلال يوم عمل. الحجز أونلاين متاح للمنشآت المسجلة.', en:'We send a detailed quote within one working day. Online booking is available to registered companies.'},
+    fields:[...COMMON_HEAD, F('company','اسم الشركة','Company name','text',{opt:1, half:1}), F('branch','الفرع','Branch','select',{req:1, half:1, opts:'branches'}),
+      F('kind','نوع المساحة','Space type','select',{req:1, half:1, opts:'kinds'}), F('people','عدد الأشخاص','Number of people','number',{req:1, half:1, min:1}),
+      F('months','مدة الاشتراك','Subscription length','select',{req:1, half:1, opts:'durations'}), F('start','تاريخ البدء المتوقع','Expected start date','date',{half:1}),
+      F('notes','ملاحظات','Notes','textarea',{opt:1}), SRC_FIELD]},
+  visit:{icon:'pin', ar:'حجز زيارة للمكان', en:'Book a visit', sub:{ar:'جولة قصيرة مع فريقنا لرؤية المساحات قبل الاشتراك.', en:'A short tour with our team to see the spaces before you subscribe.'},
+    fields:[...COMMON_HEAD, F('branch','الفرع','Branch','select',{req:1, half:1, opts:'branches'}), F('date','التاريخ','Date','date',{req:1, half:1}),
+      F('slot','الوقت المفضل','Preferred time','select',{req:1, half:1, opts:[['am','صباحًا (9 – 12)','Morning (9 – 12)'],['pm','ظهرًا (12 – 4)','Afternoon (12 – 4)'],['eve','مساءً (4 – 8)','Evening (4 – 8)']]}),
+      F('people','عدد الزوار','Visitors','number',{half:1, min:1}), SRC_FIELD]},
   event:{icon:'ticket', ar:'التسجيل في دورة أو فعالية', en:'Register for a course or event', sub:{ar:'يُحجز مقعدك فور التسجيل، وعند اكتمال العدد تنضم لقائمة الانتظار.', en:'Your seat is reserved on registration; full events go to a waitlist.'},
     fields:[...COMMON_HEAD, F('event','الدورة أو الفعالية','Course or event','select',{req:1, opts:'events'}), F('org','الجهة أو الشركة','Organisation','text',{opt:1, half:1}), SRC_FIELD]},
   opportunity:{icon:'brief', ar:'تقديم مشروع أو فرصة استثمارية', en:'Submit a project or investment opportunity', sub:{ar:'تُراجع الفرص قبل عرضها على المستثمرين، وتبقى البيانات الحساسة مخفية.', en:'Opportunities are reviewed before investors see them; sensitive data stays hidden.'},
@@ -230,7 +246,10 @@ const MODULES = [
   {k:'requests', ar:'الطلبات', icon:'inbox', acts:['view','add','edit','delete','approve','assign','export','print','customers','files']},
   {k:'crm', ar:'العملاء (CRM)', icon:'users', acts:['view','add','edit','delete','assign','export','customers']},
   {k:'bookings', ar:'الحجوزات', icon:'calendar', acts:['view','add','edit','delete','approve','export']},
+  {k:'deals', ar:'الصفقات وعروض الأسعار', icon:'brief', acts:['view','add','edit','approve','export','print']},
+  {k:'companies', ar:'المنشآت والتحقق', icon:'office', acts:['view','edit','approve','export','customers','files']},
   {k:'contracts', ar:'العقود والاشتراكات', icon:'contract', acts:['view','add','edit','delete','finance','export','print','files']},
+  {k:'billing', ar:'المحاسبة والفواتير', icon:'coins', acts:['view','add','edit','approve','export','print','finance']},
   {k:'events', ar:'الدورات والفعاليات', icon:'ticket', acts:['view','add','edit','delete','publish','export']},
   {k:'content', ar:'محتوى الموقع', icon:'layout', acts:['view','add','edit','delete','publish','files']},
   {k:'pricing', ar:'الباقات والأسعار', icon:'tag', acts:['view','edit']},
@@ -242,13 +261,16 @@ const MODULES = [
 ];
 const P = (mod, acts) => acts.split(' ').map(a => mod + '.' + a);
 const ROLE_DEFAULTS = {
-  ops:[...P('dashboard','view'), ...P('requests','view add edit approve assign export print customers files'), ...P('crm','view add edit assign export customers'),
-       ...P('bookings','view add edit approve export'), ...P('contracts','view edit print files'), ...P('events','view add edit publish export'),
-       ...P('content','view'), ...P('pricing','view'), ...P('reports','view export print'), ...P('notifications','view notify'), ...P('users','view')],
-  staff:[...P('requests','view edit customers files'), ...P('crm','view edit customers'), ...P('bookings','view edit'), ...P('events','view'), ...P('notifications','view')],
+  ops:[...P('dashboard','view finance'), ...P('requests','view add edit approve assign export print customers files'), ...P('crm','view add edit assign export customers'),
+       ...P('deals','view approve export print'), ...P('companies','view edit approve export customers files'),
+       ...P('bookings','view add edit approve export'), ...P('contracts','view edit finance print files'), ...P('billing','view finance'), ...P('events','view add edit publish export'),
+       ...P('content','view'), ...P('pricing','view edit'), ...P('reports','view export print finance'), ...P('notifications','view notify'), ...P('users','view')],
+  staff:[...P('requests','view add edit assign customers files'), ...P('crm','view add edit customers'), ...P('deals','view add edit print'), ...P('companies','view customers'),
+       ...P('bookings','view edit approve'), ...P('contracts','view'), ...P('events','view'), ...P('notifications','view')],
   content:[...P('dashboard','view'), ...P('content','view add edit delete publish files'), ...P('events','view add edit publish'), ...P('pricing','view')],
-  accountant:[...P('dashboard','view finance'), ...P('contracts','view edit finance export print files'), ...P('reports','view export print finance'), ...P('bookings','view')],
-  bookings:[...P('bookings','view add edit'), ...P('requests','view edit customers'), ...P('crm','view'), ...P('notifications','view')],
+  accountant:[...P('dashboard','view finance'), ...P('billing','view add edit approve export print finance'), ...P('contracts','view edit finance export print files'),
+       ...P('companies','view customers'), ...P('reports','view export print finance'), ...P('bookings','view')],
+  bookings:[...P('bookings','view add edit approve'), ...P('requests','view edit customers'), ...P('crm','view'), ...P('notifications','view')],
   reception:[...P('requests','view add customers'), ...P('bookings','view add'), ...P('crm','view add customers'), ...P('events','view')]
 };
 
@@ -522,12 +544,13 @@ function seedState() {
     {m:-2, revenue:74100, bookings:49, clients:19, leads:50, won:12}, {m:-1, revenue:83500, bookings:57, clients:24, leads:62, won:16}
   ];
 
-  return {
-    v:3, lang:'ar', theme:null, settings, content, resources, roles, users, requests, clients, bookings, contracts, audit, notifs, templates, customers, history,
+  const st = {
+    v:4, lang:'ar', theme:null, settings, content, resources, roles, users, requests, clients, bookings, contracts, audit, notifs, templates, customers, history,
     codes:[{code:'WASL10', pct:10, active:true}, {code:'STARTUP20', pct:20, active:true}],
     security:{require2FA:true, minPw:10, lockAfter:5, sessionMins:30, alertNewLogin:true},
     backups:[{id:'bk3', at:day(0,3,0), size:'48 MB', kind:'تلقائي'}, {id:'bk2', at:day(-1,3,0), size:'47 MB', kind:'تلقائي'}, {id:'bk1', at:day(-2,3,0), size:'47 MB', kind:'تلقائي'}],
     branches:[{id:'main', name:'الفرع الرئيسي'}],
     seq:1045, session:null, portal:null, loginFails:{}
   };
+  return seedBiz(st, {day, dOnly, T});
 }

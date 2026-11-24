@@ -3,25 +3,34 @@
 
 const DEMO_PW = 'Demo@2026', OTP = '246810';
 const NAV = [
-  {k:'mine', label:'مهامي وتقاريري', icon:'target', always:true},
+  {k:'mine', label:'مهامي اليوم', icon:'target', always:true},
   {k:'dashboard', label:'لوحة المؤشرات', icon:'grid', mod:'dashboard'},
+  {grp:'المبيعات'},
   {k:'requests', label:'الطلبات', icon:'inbox', mod:'requests', count:() => visibleRequests().filter(r => r.status === 'new').length},
-  {k:'crm', label:'العملاء (CRM)', icon:'users', mod:'crm'},
-  {k:'bookings', label:'الحجوزات', icon:'calendar', mod:'bookings', count:() => S.bookings.filter(b => b.status === 'pending').length},
-  {k:'contracts', label:'العقود والاشتراكات', icon:'contract', mod:'contracts'},
-  {k:'events', label:'الدورات والفعاليات', icon:'ticket', mod:'events'},
+  {k:'crm', label:'العملاء المحتملون', icon:'users', mod:'crm', count:() => visibleLeads().filter(c => leadLate(c)).length, hot:true},
+  {k:'deals', label:'الصفقات وعروض الأسعار', icon:'brief', mod:'deals'},
+  {k:'bookings', label:'حجوزات القاعات', icon:'calendar', mod:'bookings', count:() => S.bookings.filter(b => b.status === 'pending' && bookingVisible(b)).length},
+  {grp:'الإدارة'},
+  {k:'approvals', label:'الاعتمادات', icon:'stamp', mod:'deals', act:'approve', count:() => S.deals.filter(d => d.status === 'pending').length + S.companies.filter(c => c.pendingChange).length},
+  {k:'companies', label:'المنشآت', icon:'office', mod:'companies', count:() => S.companies.filter(c => c.status === 'pending').length},
+  {k:'contracts', label:'العقود', icon:'contract', mod:'contracts'},
+  {k:'spaces', label:'المساحات والأسعار', icon:'tag', mod:'pricing'},
+  {grp:'المحاسبة'},
+  {k:'billing', label:'الفواتير والمدفوعات', icon:'coins', mod:'billing', count:() => S.payments.filter(p => p.status === 'review').length},
   {grp:'الموقع'},
   {k:'content', label:'محتوى الموقع', icon:'layout', mod:'content'},
-  {k:'pricing', label:'الباقات والأسعار', icon:'tag', mod:'pricing'},
+  {k:'events', label:'الدورات والفعاليات', icon:'ticket', mod:'events'},
+  {k:'pricing', label:'باقات الموقع', icon:'list', mod:'pricing'},
   {grp:'المتابعة'},
   {k:'reports', label:'التقارير', icon:'chart', mod:'reports'},
   {k:'notifs', label:'الإشعارات', icon:'bell', always:true, count:() => myNotifs().filter(n => !n.read).length},
   {k:'audit', label:'سجل العمليات', icon:'list', mod:'audit'},
-  {grp:'الإدارة'},
-  {k:'users', label:'المستخدمون والصلاحيات', icon:'key', mod:'users'},
+  {grp:'النظام'},
+  {k:'users', label:'الفريق والصلاحيات', icon:'key', mod:'users'},
+  {k:'rules', label:'قواعد العمل', icon:'target', mod:'settings'},
   {k:'settings', label:'الإعدادات والأمان', icon:'gear', mod:'settings'}
 ];
-const allowed = (n) => n.always || can(n.mod, 'view');
+const allowed = (n) => n.always || can(n.mod, n.act || 'view');
 
 /* ---------- small render helpers ---------- */
 const av = (name) => `<span class="av" aria-hidden="true">${esc(initials(name))}</span>`;
@@ -40,79 +49,9 @@ const showEmail = (e) => customerData() ? e : maskEmail(e);
 const monthKey = (iso) => (iso || '').slice(0, 7);
 const thisMonth = () => today().slice(0, 7);
 
-/* ---------- login ---------- */
-let loginStep = {email:'', twofa:false};
-function renderLogin() {
-  const u = loginStep.twofa ? S.users.find(x => x.email === loginStep.email) : null;
-  $('#app').innerHTML = `<div class="login"><div class="login-art"><div style="display:grid;justify-items:center"><img src="assets/logo-full.webp" alt="وصل دائم" width="300" height="290"><p>لوحة التحكم الداخلية — للموظفين والإدارة فقط</p></div></div>
-  <div class="login-form"><div class="login-card">${u ? `
-    <a href="#" data-act="login-back" class="muted" style="font-size:14px">${ic('back', '')} رجوع</a>
-    <h1>التحقق بخطوتين</h1><p class="muted">أدخل الرمز المكوّن من 6 أرقام المرسل إلى جوال ${esc(u.name)}. <b>الرمز التجريبي: ${OTP}</b></p>
-    <form id="otp-form" class="form"><div class="otp">${[0, 1, 2, 3, 4, 5].map(i => `<input inputmode="numeric" maxlength="1" aria-label="الرقم ${i + 1}" data-otp="${i}">`).join('')}</div>
-    <div class="notice bad hidden" id="otp-err">${ic('alert')}<div>الرمز غير صحيح</div></div><button class="btn btn-gold" type="submit">تحقق ودخول</button></form>` : `
-    <div><span class="chip">${VIEW_ONLY ? 'نسخة عرض فقط' : 'حساب تجريبي'}</span></div><h1>تسجيل الدخول</h1><p class="muted">لكل موظف حساب مستقل حتى تُنسب كل عملية لصاحبها.</p>
-    ${VIEW_ONLY ? `<div class="notice">${ic('info')}<div>اختر أي حساب بالأسفل للدخول مباشرة، وشاهد ما يظهر لكل دور: المالك، مدير العمليات، الموظف، مسؤول المحتوى، المحاسب. الأزرار التي تغيّر البيانات معطّلة في هذه النسخة.</div></div>` : ''}
-${VIEW_ONLY ? `    <div><p style="font-weight:600;margin-bottom:8px">جرّب كل دور — اختر حسابًا:</p><div class="demo-accts">
-      ${S.users.map(x => `<button class="demo-acct" data-act="pick-acct" data-email="${esc(x.email)}">${av(x.name)}<div><b>${esc(x.name)} — ${esc(roleById(x.roleId)?.name)}</b><span class="ltr">${esc(x.email)}</span>${x.status !== 'active' ? ' <span class="chip bad">موقوف</span>' : ''}${x.locked ? ' <span class="chip bad">مقفل</span>' : ''}</div></button>`).join('')}
-    </div></div>
-` : ''}    <form id="login-form" class="form" novalidate>
-      ${fld('lg-email', 'البريد الإلكتروني', inp('lg-email', loginStep.email, 'email', 'dir="ltr" autocomplete="username"'))}
-      ${fld('lg-pw', 'كلمة المرور', inp('lg-pw', '', 'password', 'dir="ltr" autocomplete="current-password"'), `كلمة المرور لجميع الحسابات التجريبية: <b class="ltr">${DEMO_PW}</b>`)}
-      <div class="notice bad hidden" id="lg-err">${ic('alert')}<div id="lg-err-t"></div></div>
-      <button class="btn btn-gold" type="submit">دخول</button>
-      <a href="#" data-act="forgot" class="muted" style="font-size:14px;justify-self:start">نسيت كلمة المرور؟</a></form>
-${VIEW_ONLY ? '' : `    <div><p style="font-weight:600;margin-bottom:8px">جرّب كل دور — اختر حسابًا:</p><div class="demo-accts">
-      ${S.users.map(x => `<button class="demo-acct" data-act="pick-acct" data-email="${esc(x.email)}">${av(x.name)}<div><b>${esc(x.name)} — ${esc(roleById(x.roleId)?.name)}</b><span class="ltr">${esc(x.email)}</span>${x.status !== 'active' ? ' <span class="chip bad">موقوف</span>' : ''}${x.locked ? ' <span class="chip bad">مقفل</span>' : ''}</div></button>`).join('')}
-    </div></div>
-`}    <a href="#" class="muted" style="font-size:14px">${ic('back', '')} العودة إلى الموقع</a>`}
-  </div></div></div>`;
-  if (u) {
-    const ins = $$('[data-otp]'); ins[0].focus();
-    ins.forEach((i, k) => { i.oninput = () => { i.value = i.value.replace(/\D/g, ''); if (i.value && ins[k + 1]) ins[k + 1].focus(); }; i.onkeydown = (e) => { if (e.key === 'Backspace' && !i.value && ins[k - 1]) ins[k - 1].focus(); }; });
-    ins[0].addEventListener('paste', (e) => { const d = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6); if (d.length === 6) { e.preventDefault(); ins.forEach((x, k) => x.value = d[k]); } });
-    $('#otp-form').onsubmit = (e) => { e.preventDefault(); const code = ins.map(i => i.value).join(''); if (code !== OTP) { $('#otp-err').classList.remove('hidden'); ins.forEach(i => i.value = ''); ins[0].focus(); return; } finishLogin(u); };
-  } else {
-    $('#login-form').onsubmit = (e) => { e.preventDefault(); doLogin($('#lg-email').value.trim().toLowerCase(), $('#lg-pw').value); };
-  }
-}
-function loginError(msg) { $('#lg-err-t').textContent = msg; $('#lg-err').classList.remove('hidden'); }
-function doLogin(email, pw) {
-  loginStep.email = email;
-  const u = S.users.find(x => x.email === email);
-  if (!u) { if (S.customers.some(c => c.email === email)) return loginError(STR.ar.admin_blocked); return loginError('لا يوجد حساب إداري بهذا البريد.'); }
-  if (u.locked) return loginError('الحساب مقفل بعد محاولات دخول فاشلة متكررة. يفتحه مالك النظام من صفحة المستخدمين.');
-  if (u.status !== 'active') return loginError('هذا الحساب موقوف مؤقتًا. تواصل مع مالك النظام.');
-  if (pw !== DEMO_PW) {
-    S.loginFails[email] = (S.loginFails[email] || 0) + 1; const n = S.loginFails[email];
-    audit('login_fail', email, null, {المحاولة:n}, '—');
-    if (n >= S.security.lockAfter) {
-      u.locked = true; audit('lock', u.name, null, {السبب:`${n} محاولات فاشلة`}, '—');
-      S.users.filter(x => x.roleId === 'owner').forEach(o => notify(o.id, 'قُفل حساب بسبب محاولات دخول فاشلة', `${u.name} (${email}) — ${n} محاولات`, 'users'));
-      save(); return loginError(`قُفل الحساب بعد ${n} محاولات فاشلة، وأُبلغ مالك النظام.`);
-    }
-    if (n >= 3) S.users.filter(x => x.roleId === 'owner').forEach(o => notify(o.id, 'محاولة دخول مشبوهة', `${n} محاولات فاشلة على ${email}`, 'audit'));
-    save(); return loginError(`كلمة المرور غير صحيحة. المتبقي قبل قفل الحساب: ${S.security.lockAfter - n}`);
-  }
-  const need2fa = u.twoFA || (S.security.require2FA && ['owner', 'ops'].includes(u.roleId));
-  if (need2fa) { loginStep.twofa = true; renderLogin(); return; }
-  finishLogin(u);
-}
-function finishLogin(u, quiet = false) {
-  S.loginFails[u.email] = 0; loginStep = {email:'', twofa:false};
-  S.session = {userId:u.id, at:new Date().toISOString()};
-  u.lastLogin = S.session.at;
-  u.sessions = [{device:(navigator.userAgent.includes('Mobile') ? 'جوال — ' : 'متصفح — ') + (navigator.userAgent.match(/(Edg|Chrome|Safari|Firefox)/)?.[1] || 'Browser'), ip:fakeIp(), at:S.session.at}, ...(u.sessions || [])].slice(0, 5);
-  audit('login', 'لوحة التحكم');
-  if (S.security.alertNewLogin && u.roleId !== 'owner') S.users.filter(x => x.roleId === 'owner').forEach(o => notify(o.id, 'دخول جديد إلى لوحة التحكم', `${u.name} — ${u.sessions[0].device}`, 'audit'));
-  UI.admin = NAV.find(n => n.k && n.k !== 'mine' && allowed(n))?.k || 'mine';
-  save(); renderAdmin(); if (!quiet) toast(`مرحبًا ${u.name}`);
-}
-ACT['pick-acct'] = (el) => {
-  if (VIEW_ONLY) { const u = S.users.find(x => x.email === el.dataset.email); if (u.status !== 'active') { $('#lg-email').value = u.email; return loginError('هذا الحساب موقوف مؤقتًا — مثال على إيقاف موظف دون حذفه. اختر حسابًا آخر.'); } finishLogin(u); return; } $('#lg-email').value = el.dataset.email; $('#lg-pw').value = DEMO_PW; $$('.demo-acct').forEach(b => b.classList.toggle('sel', b === el)); $('#lg-pw').focus(); };
-ACT['login-back'] = () => { loginStep.twofa = false; renderLogin(); };
-ACT['forgot'] = () => openModal({title:'إعادة تعيين كلمة المرور', body:`<form class="form" id="fg">${fld('fg-e', 'البريد الإلكتروني', inp('fg-e', '', 'email', 'dir="ltr"'))}<button class="btn btn-gold" type="submit">إرسال رابط إعادة التعيين</button></form>`,
-  onMount:(m) => m.querySelector('#fg').onsubmit = (e) => { e.preventDefault(); closeModal(); toast('أُرسل رابط إعادة التعيين إن كان البريد مسجلًا (محاكاة)'); }});
-ACT['logout'] = () => { audit('logout', 'لوحة التحكم'); S.session = null; save(); renderAdmin(); };
+/* ---------- login: the unified sign-in page lives in pages.js (#login) ---------- */
+function renderLogin() { UI.loginFor = 'admin'; if (location.hash !== '#login') location.replace('#login'); else renderPage('login'); }
+ACT['logout'] = () => { audit('logout', 'لوحة التحكم'); S.session = null; save(); toast('سُجّل خروجك'); location.hash = 'login'; };
 ACT['nav'] = (el) => { UI.admin = el.dataset.k; $('#side')?.classList.remove('open'); renderAdmin(); window.scrollTo(0, 0); };
 ACT['side'] = () => $('#side').classList.toggle('open');
 
@@ -125,7 +64,7 @@ function renderAdmin() {
   if (!nav.find(n => n.k === UI.admin)) UI.admin = nav.find(n => n.k && n.k !== 'mine')?.k || 'mine';
   const cur = NAV.find(n => n.k === UI.admin);
   const navHTML = nav.map((n, i) => n.grp ? (nav[i + 1] && !nav[i + 1].grp ? `<div class="grp">${n.grp}</div>` : '') :
-    `<a class="nl ${n.k === UI.admin ? 'on' : ''}" href="#admin" data-act="nav" data-k="${n.k}" ${n.k === UI.admin ? 'aria-current="page"' : ''}>${ic(n.icon)}<span>${n.label}</span>${n.count && n.count() ? `<span class="cnt">${n.count()}</span>` : ''}</a>`).join('');
+    `<a class="nl ${n.k === UI.admin ? 'on' : ''}" href="#admin" data-act="nav" data-k="${n.k}" ${n.k === UI.admin ? 'aria-current="page"' : ''}>${ic(n.icon)}<span>${n.label}</span>${n.count && n.count() ? `<span class="cnt ${n.hot ? 'hot' : ''}">${n.count()}</span>` : ''}</a>`).join('');
   const unread = myNotifs().filter(n => !n.read).length;
   const y = scrollY;
   $('#app').innerHTML = `<div class="admin"><aside class="side" id="side" aria-label="القائمة الجانبية">
@@ -140,6 +79,7 @@ function renderAdmin() {
     <button class="icon-btn" data-act="logout" aria-label="تسجيل الخروج" title="تسجيل الخروج">${ic('logout')}</button></div>
     <div class="content" id="acontent">${VIEW_ONLY ? `<div class="notice warn">${ic('eye')}<div><b>نسخة عرض فقط.</b> تنقّل بين الأقسام وبدّل الحسابات من أعلى الصفحة لترى صلاحيات كل دور. الأزرار التي تغيّر البيانات معطّلة.</div></div>` : ''}${(VIEWS[UI.admin] || VIEWS.mine)()}</div></div></div>`;
   $('#acct-switch').onchange = (e) => { const nu = userById(e.target.value); audit('logout', 'لوحة التحكم'); finishLogin(nu, true); toast(`أنت الآن: ${nu.name} (${roleById(nu.roleId).name})`); };
+  bindIdle();
   if (AFTER[UI.admin]) AFTER[UI.admin]();
   lockUI($('#app'));
   window.scrollTo(0, y);
@@ -148,28 +88,6 @@ ACT['toggle-theme-admin'] = () => { toggleTheme(); renderAdmin(); };
 const AFTER = {};
 const rerender = () => { save(); renderAdmin(); };
 
-/* ================= metrics ================= */
-function metrics() {
-  const m = thisMonth();
-  const activeContracts = S.contracts.filter(c => c.status !== 'ended');
-  const bookingsMonth = S.bookings.filter(b => activeBooking(b) && monthKey(b.start) === m);
-  const revenue = activeContracts.reduce((n, c) => n + c.monthly, 0) + bookingsMonth.filter(b => b.status === 'confirmed').reduce((n, b) => n + (b.price || 0), 0);
-  const outstanding = activeContracts.reduce((n, c) => { const el = Math.max(1, Math.ceil(daysBetween(c.start, today()) / 30)); return n + Math.max(0, Math.min(c.total, c.monthly * el) - c.paid); }, 0);
-  const newClients = S.clients.filter(c => monthKey(c.createdAt) === m).length;
-  const won = S.clients.filter(c => c.status === 'contracted').length;
-  const conv = S.clients.length ? Math.round(won / S.clients.length * 100) : 0;
-  const offices = S.resources.filter(r => r.kind === 'office');
-  const occ = {
-    office:Math.round(offices.filter(r => activeContracts.some(c => c.resourceId === r.id)).length / Math.max(1, offices.length) * 100),
-    desk:Math.round(Math.min(1, activeContracts.filter(c => c.resourceId === 'r3').length * 6 / 40) * 100),
-    room:Math.round(Math.min(1, S.bookings.filter(b => activeBooking(b) && resById(b.resourceId)?.kind === 'room' && Math.abs(daysBetween(today(), b.start.slice(0, 10))) <= 3).reduce((n, b) => n + (new Date(b.end) - new Date(b.start)) / 36e5, 0) / (3 * 14 * 7)) * 100)
-  };
-  const byType = Object.keys(REQ_TYPES).map(k => [k, S.requests.filter(r => r.type === k).length]).sort((a, b) => b[1] - a[1]);
-  const bySource = Object.keys(SOURCES).map(k => { const all = S.clients.filter(c => c.source === k); const w = all.filter(c => c.status === 'contracted' || c.status === 'booked').length; return [k, all.length, w, all.length ? Math.round(w / all.length * 100) : 0]; }).filter(x => x[1]);
-  const staff = S.users.filter(u => u.roleId !== 'owner').map(u => { const rs = S.requests.filter(r => r.assignee === u.id); const done = rs.filter(r => ['done', 'approved', 'rejected'].includes(r.status)).length; return {u, total:rs.length, done, open:rs.length - done, follow:S.clients.filter(c => c.owner === u.id).length}; }).filter(x => x.total || x.follow);
-  const expiring = S.contracts.filter(c => { const d = daysBetween(today(), c.end); return d >= 0 && d <= 30; });
-  return {revenue, outstanding, newClients, conv, occ, byType, bySource, staff, expiring, bookingsMonth:bookingsMonth.length, deposits:activeContracts.reduce((n, c) => n + (c.deposit || 0), 0)};
-}
 function tile(label, value, {icon = '', delta = '', up = true, locked = false} = {}) {
   return `<div class="tile ${locked ? 'locked' : ''}"><div class="l">${icon ? ic(icon) : ''}${label}</div><div class="v num">${value}</div>${delta ? `<div class="d ${up ? 'up' : 'down'}">${delta}</div>` : ''}${locked ? `<div class="lockmsg">${ic('lock')} بيانات مالية — تتطلب صلاحية</div>` : ''}</div>`;
 }
@@ -194,36 +112,10 @@ function monthChart(key, label, fmt = money) {
 /* ================= views ================= */
 const VIEWS = {};
 
-VIEWS.mine = () => {
-  const u = me(); const mine = S.requests.filter(r => r.assignee === u.id);
-  const open = mine.filter(r => !['done', 'approved', 'rejected'].includes(r.status));
-  const doneM = mine.filter(r => ['done', 'approved', 'rejected'].includes(r.status) && monthKey(r.updatedAt) === thisMonth()).length;
-  const follow = S.clients.filter(c => c.owner === u.id && c.nextFollow && c.nextFollow <= today() && !['contracted', 'lost'].includes(c.status));
-  const myActs = S.audit.filter(a => a.by === u.id).length;
-  return `<div class="tiles">${tile('طلبات مفتوحة مسندة إليّ', open.length, {icon:'inbox'})}${tile('أنجزتها هذا الشهر', doneM, {icon:'check'})}${tile('متابعات مستحقة اليوم', follow.length, {icon:'phone'})}${tile('عملياتي في السجل', myActs, {icon:'list'})}</div>
-  <div class="cols">${panel('طلباتي المفتوحة', table(['الطلب', 'العميل', 'الحالة', 'التاريخ'], open.map(r => `<tr class="click" data-act="open-req" data-id="${r.id}"><td><b class="ltr">${r.id}</b><span class="sub">${esc(REQ_TYPES[r.type].ar)}</span></td><td>${esc(r.name)}</td><td>${stChip(r.status)}</td><td>${fmtDate(r.createdAt)}</td></tr>`), 'لا توجد طلبات مفتوحة مسندة إليك'), {pad:false, sub:'تصلك إشعارات فور إسناد طلب جديد إليك.'})}
-  ${panel('متابعات العملاء المستحقة', table(['العميل', 'الحالة', 'الموعد'], follow.map(c => `<tr class="click" data-act="open-client" data-id="${c.id}"><td><b>${esc(c.name)}</b><span class="sub">${esc(REQ_TYPES[c.service]?.ar || '')}</span></td><td><span class="chip ${CRM_STATUS[c.status].cls}">${CRM_STATUS[c.status].ar}</span></td><td class="${c.nextFollow < today() ? 'gold' : ''}">${fmtDate(c.nextFollow)}</td></tr>`), 'لا توجد متابعات مستحقة'), {pad:false})}</div>`;
-};
-
-VIEWS.dashboard = () => {
-  const M = metrics(); const fin = can('dashboard', 'finance');
-  return `<div class="tiles">
-    ${tile('العملاء الجدد هذا الشهر', M.newClients, {icon:'users', delta:`الشهر الماضي: ${S.history.at(-1).clients}`, up:M.newClients >= S.history.at(-1).clients})}
-    ${tile('الحجوزات هذا الشهر', M.bookingsMonth, {icon:'calendar'})}
-    ${tile('الإيراد الشهري (ر.س)', money(M.revenue), {icon:'coins', locked:!fin, delta:`الشهر الماضي: ${money(S.history.at(-1).revenue)}`, up:M.revenue >= S.history.at(-1).revenue})}
-    ${tile('مبالغ مستحقة (ر.س)', money(M.outstanding), {icon:'alert', locked:!fin})}</div>
-  <div class="cols">${panel(fin ? 'الإيراد: مقارنة الشهور' : 'الحجوزات: مقارنة الشهور', fin ? monthChart('revenue', 'الإيراد الشهري') : monthChart('bookings', 'الحجوزات الشهرية', (v) => v), {sub:'آخر ستة أشهر والشهر الحالي'})}
-    ${panel('نسبة الإشغال', barsHTML([['المكاتب الخاصة', M.occ.office], ['المقاعد المرنة', M.occ.desk], ['قاعات الاجتماعات', M.occ.room]], v => v + '%'), {sub:'حسب نوع المساحة'})}</div>
-  <div class="cols even">${panel('أكثر الخدمات طلبًا', barsHTML(M.byType.map(([k, v]) => [REQ_TYPES[k].ar, v])))}
-    ${panel('مصدر العملاء الأكثر نجاحًا', barsHTML(M.bySource.sort((a, b) => b[3] - a[3]).map(([k, n, w, p]) => [SOURCES[k].ar, p, ` <span class="muted">(${w}/${n})</span>`]), v => v + '%'), {sub:`نسبة تحويل الاستفسارات إلى حجز أو عقد — الإجمالي ${M.conv}%`})}</div>
-  <div class="cols">${panel('أداء الموظفين', table(['الموظف', 'طلبات مسندة', 'منجزة', 'مفتوحة', 'عملاء يتابعهم'], M.staff.map(s => `<tr><td>${whoTag(s.u.id)}</td><td class="num">${s.total}</td><td class="num">${s.done}</td><td class="num">${s.open}</td><td class="num">${s.follow}</td></tr>`)), {pad:false})}
-    ${panel('عقود تنتهي خلال 30 يومًا', table(['العقد', 'العميل', 'ينتهي'], M.expiring.map(c => `<tr><td class="ltr">${c.id}</td><td>${esc(c.client)}</td><td><span class="chip warn">بعد ${daysBetween(today(), c.end)} يوم</span></td></tr>`), 'لا توجد عقود قريبة الانتهاء'), {pad:false})}</div>`;
-};
-
 /* ---------- requests ---------- */
 function visibleRequests() {
   const u = me(); if (!u) return [];
-  return scopeAssigned(u) ? S.requests.filter(r => r.assignee === u.id) : S.requests;
+  return S.requests.filter(r => inScope(r, 'assignee', u));
 }
 VIEWS.requests = () => {
   const f = UI.reqFilter; const scoped = scopeAssigned();
@@ -233,7 +125,7 @@ VIEWS.requests = () => {
   if (f.who) list = list.filter(r => (f.who === 'none' ? !r.assignee : r.assignee === f.who));
   if (f.q) { const q = f.q.toLowerCase(); list = list.filter(r => [r.id, r.name, r.phone, r.email].join(' ').toLowerCase().includes(q)); }
   const counts = Object.keys(REQ_STATUS).map(s => [s, visibleRequests().filter(r => r.status === s).length]);
-  return `${scoped ? `<div class="notice">${ic('info')}<div>تظهر لك الطلبات المسندة إليك فقط حسب صلاحيات دورك.</div></div>` : ''}
+  return `${scopeOf() !== 'all' ? `<div class="notice">${ic('info')}<div>${scopeOf() === 'branch' ? `تظهر لك طلبات ${esc(branchName(me().branch, 'ar'))} والطلبات غير المُسندة فيه وما أُسند إليك.` : 'تظهر لك الطلبات المسندة إليك فقط حسب صلاحيات دورك.'}</div></div>` : ''}
   <div class="toolbar">${counts.map(([s, n]) => `<button class="chip ${f.status === s ? '' : 'plain'}" style="border:0;cursor:pointer" data-act="req-status-filter" data-s="${s}">${REQ_STATUS[s].ar} <b class="num">${n}</b></button>`).join('')}</div>
   ${panel('الطلبات', `<div class="panel-body" style="padding-bottom:0"><div class="toolbar">
     <input class="input search" id="rq-q" placeholder="بحث بالرقم أو الاسم أو الجوال" value="${esc(f.q)}" aria-label="بحث">
@@ -241,7 +133,7 @@ VIEWS.requests = () => {
     ${scoped ? '' : `<select class="input" id="rq-who" aria-label="الموظف"><option value="">كل الموظفين</option><option value="none" ${f.who === 'none' ? 'selected' : ''}>غير مُسند</option>${options(staffOpts(), f.who)}</select>`}
     ${f.q || f.type || f.status || f.who ? `<button class="btn btn-ghost btn-sm" data-act="req-clear">مسح الفلاتر</button>` : ''}</div></div>
     <div style="padding-top:14px">${table(['الطلب', 'العميل', 'الحالة', 'المسؤول', 'المصدر', 'التاريخ'], list.map(r => `<tr class="click" data-act="open-req" data-id="${r.id}" tabindex="0">
-      <td><b class="ltr">${r.id}</b><span class="sub">${esc(REQ_TYPES[r.type].ar)}</span></td><td>${esc(r.name)}<span class="sub ltr" style="text-align:start">${esc(showPhone(r.phone))}</span></td>
+      <td><b class="ltr">${r.id}</b><span class="sub">${esc(REQ_TYPES[r.type].ar)}${S.branches.length > 1 ? ' · ' + esc(branchName(r.branch, 'ar')) : ''}</span></td><td>${esc(r.name)}${r.companyId ? `<span class="sub">${esc(companyName(companyById(r.companyId), 'ar'))}</span>` : `<span class="sub ltr" style="text-align:start">${esc(showPhone(r.phone))}</span>`}</td>
       <td>${stChip(r.status)}${r.data.waitlist ? ' <span class="chip warn">انتظار</span>' : ''}</td><td>${whoTag(r.assignee)}</td><td>${esc(SOURCES[r.source]?.ar || '')}</td><td>${fmtDate(r.createdAt)}<span class="sub">${ago(r.createdAt)}</span></td></tr>`), 'لا توجد طلبات مطابقة')}</div>`,
     {pad:false, sub:`${list.length} طلبًا`, actions:`${can('requests', 'add') ? `<button class="btn btn-ghost btn-sm" data-act="admin-new-req">${ic('plus')} طلب يدوي</button>` : ''}
       <button class="btn btn-ghost btn-sm" data-act="req-export" ${can('requests', 'export') ? '' : 'disabled title="يتطلب صلاحية التصدير"'}>${ic('download')} تصدير Excel</button>`})}`;
@@ -263,11 +155,17 @@ ACT['admin-new-req'] = () => { if (guard('requests', 'add')) ACT['apply'](); };
 function fieldLabel(type, k) { const f = FORMS[type]?.fields.find(x => x.k === k); return f ? f.ar : k; }
 function fieldValue(type, k, v) {
   const f = FORMS[type]?.fields.find(x => x.k === k);
+  if (k === 'contract') return v;
+  if (k === 'interests' && Array.isArray(v)) return v.map(x => ({office:'مكتب مقفل', desk:'مقاعد مرنة', rooms:'قاعات اجتماعات', virtual:'مكتب افتراضي', programs:'برامج الحاضنة والمسرعة', foreign:'تأسيس مستثمر أجنبي'}[x] || x)).join('، ');
+  if (k === 'months') return (DURATIONS.find(d => String(d[0]) === String(v)) || [, v + ' أشهر'])[1];
   if (Array.isArray(v)) return v.map(x => SECTORS[x]?.ar || x).join('، ');
   if (!f || f.type !== 'select') return v;
   if (Array.isArray(f.opts)) return (f.opts.find(o => o[0] === v) || [, v])[1];
   if (f.opts === 'sectors') return SECTORS[v]?.ar || v;
   if (f.opts === 'resources') return L(resById(v)?.name) || v;
+  if (f.opts === 'branches') return branchName(v, 'ar');
+  if (f.opts === 'kinds') return L(SPACE_KINDS[v], 'ar') || v;
+  if (f.opts === 'durations') return (DURATIONS.find(d => String(d[0]) === String(v)) || [, v])[1];
   if (f.opts === 'events') return L(S.content.events.find(e => e.id === v)?.title) || v;
   if (f.opts === 'opportunities') return L(S.content.opportunities.find(o => o.id === v)?.name) || v;
   return v;
@@ -275,12 +173,12 @@ function fieldValue(type, k, v) {
 ACT['open-req'] = (el) => openRequest(el.dataset.id);
 function openRequest(id) {
   const r = S.requests.find(x => x.id === id); if (!r) return;
-  if (scopeAssigned() && r.assignee !== me().id) return toast('هذا الطلب غير مسند إليك.', true);
+  if (!inScope(r)) return toast('هذا الطلب خارج نطاق صلاحيتك.', true);
   const ce = can('requests', 'edit'), ca = can('requests', 'approve'), cs = can('requests', 'assign'), cf = can('requests', 'files');
   const data = Object.entries(r.data).filter(([k, v]) => v !== '' && v != null && k !== 'deck' && k !== 'waitlist');
   openModal({size:'xl', title:`<span class="ltr">${r.id}</span> — ${esc(REQ_TYPES[r.type].ar)}`, sub:`استُلم ${fmtDate(r.createdAt, true)} · المصدر: ${esc(SOURCES[r.source]?.ar || '')}`, body:`<div class="detail"><div style="display:grid;gap:18px;align-content:start">
     <div class="panel"><div class="panel-head"><h2>بيانات العميل</h2>${customerData() ? '' : '<span class="chip plain">' + ic('lock') + ' مخفية جزئيًا</span>'}</div><div class="panel-body"><dl class="kv">
-      <dt>الاسم</dt><dd>${esc(r.name)}</dd><dt>الجوال</dt><dd class="ltr" style="text-align:start">${esc(showPhone(r.phone))}</dd><dt>البريد</dt><dd class="ltr" style="text-align:start">${esc(showEmail(r.email))}</dd></dl></div></div>
+      ${r.companyId ? `<dt>المنشأة</dt><dd><a href="#admin" data-act="open-company" data-id="${r.companyId}">${esc(companyName(companyById(r.companyId), 'ar'))}</a></dd>` : ''}<dt>الاسم</dt><dd>${esc(r.name)}</dd><dt>الجوال</dt><dd class="ltr" style="text-align:start">${esc(showPhone(r.phone))}</dd><dt>البريد</dt><dd class="ltr" style="text-align:start">${esc(showEmail(r.email))}</dd></dl></div></div>
     <div class="panel"><div class="panel-head"><h2>تفاصيل الطلب</h2></div><div class="panel-body"><dl class="kv">${data.map(([k, v]) => `<dt>${esc(fieldLabel(r.type, k))}</dt><dd>${esc(fieldValue(r.type, k, v))}</dd>`).join('') || '<dt>—</dt><dd></dd>'}</dl></div></div>
     <div class="panel"><div class="panel-head"><h2>الملفات والمرفقات</h2>${cf ? `<label class="btn btn-ghost btn-xs">${ic('upload')} رفع ملف<input type="file" id="rq-file" hidden></label>` : ''}</div><div class="panel-body">
       ${cf ? (r.files.length ? r.files.map(f => `<div class="list-item" style="padding:8px 0">${ic('doc')}<span class="grow">${esc(f)}</span><span class="chip plain">محمي</span></div>`).join('') : '<p class="muted">لا توجد ملفات</p>') : lockNote('الاطلاع على المرفقات يتطلب صلاحية «الملفات».')}</div></div>
@@ -311,196 +209,6 @@ function renderAdminKeepModal() { const m = $('#modal').innerHTML; const open = 
 ACT['print'] = () => tryPrint();
 ACT['req-decide'] = (el) => { const r = S.requests.find(x => x.id === el.dataset.id); if (!guard('requests', 'approve')) return; setReqStatus(r, el.dataset.s); save(); renderAdmin(); openRequest(r.id); toast(el.dataset.s === 'approved' ? 'تمت الموافقة وأُبلغ العميل' : 'رُفض الطلب وأُبلغ العميل'); };
 ACT['req-del'] = (el) => confirmBox(`حذف الطلب ${el.dataset.id} نهائيًا؟ تبقى العملية مسجلة في سجل العمليات.`, () => { const i = S.requests.findIndex(x => x.id === el.dataset.id); const r = S.requests[i]; S.requests.splice(i, 1); audit('delete', r.id, {النوع:REQ_TYPES[r.type].ar, العميل:r.name}, null); rerender(); toast('حُذف الطلب'); }, 'حذف نهائي');
-
-/* ---------- CRM ---------- */
-function visibleClients() { return scopeAssigned() ? S.clients.filter(c => c.owner === me().id) : S.clients; }
-VIEWS.crm = () => {
-  const list = visibleClients(); const late = list.filter(c => c.nextFollow && c.nextFollow < today() && !['contracted', 'lost'].includes(c.status)).length;
-  const due = list.filter(c => c.nextFollow === today()).length; const M = metrics();
-  const best = M.bySource.slice().sort((a, b) => b[3] - a[3])[0];
-  return `<div class="tiles">${tile('إجمالي العملاء', list.length, {icon:'users'})}${tile('متابعات اليوم', due, {icon:'phone'})}${tile('متابعات متأخرة', late, {icon:'alert'})}${tile('نسبة التحويل إلى عقد', M.conv + '%', {icon:'chart', delta:best ? 'أفضل مصدر: ' + SOURCES[best[0]].ar : ''})}</div>
-  ${scopeAssigned() ? `<div class="notice">${ic('info')}<div>تظهر لك ملفات العملاء الذين تتابعهم فقط.</div></div>` : ''}
-  ${panel('ملفات العملاء', UI.crmMode === 'board' ? `<div class="board">${Object.entries(CRM_STATUS).map(([k, s]) => { const cs = list.filter(c => c.status === k);
-      return `<div class="lane"><h4><span>${s.ar}</span><span class="muted num">${cs.length}</span></h4>${cs.map(c => `<div class="lead-card" data-act="open-client" data-id="${c.id}" tabindex="0" role="button"><b>${esc(c.name)}</b><span class="muted">${esc(REQ_TYPES[c.service]?.ar || '')} · ${esc(SOURCES[c.source]?.ar || '')}</span>
-      <span class="due ${c.nextFollow && c.nextFollow < today() && !['contracted', 'lost'].includes(k) ? 'late' : 'muted'}">${c.nextFollow ? 'المتابعة: ' + fmtDate(c.nextFollow) : ''}</span>${c.owner ? `<span class="muted" style="font-size:12px">${esc(userName(c.owner))}</span>` : ''}</div>`).join('')}</div>`; }).join('')}</div>`
-    : table(['العميل', 'الخدمة', 'المصدر', 'الحالة', 'المسؤول', 'المتابعة القادمة'], list.map(c => `<tr class="click" data-act="open-client" data-id="${c.id}"><td><b>${esc(c.name)}</b><span class="sub ltr" style="text-align:start">${esc(showPhone(c.phone))}</span></td><td>${esc(REQ_TYPES[c.service]?.ar || '')}</td><td>${esc(SOURCES[c.source]?.ar || '')}</td><td><span class="chip ${CRM_STATUS[c.status].cls}">${CRM_STATUS[c.status].ar}</span></td><td>${whoTag(c.owner)}</td><td>${fmtDate(c.nextFollow)}</td></tr>`)),
-    {pad:UI.crmMode === 'board', sub:'سبب عدم تحوّل الاستفسار يُسجَّل في ملاحظات العميل', actions:`<div class="seg" role="tablist"><button class="${UI.crmMode === 'board' ? 'on' : ''}" data-act="crm-mode" data-m="board">لوحة</button><button class="${UI.crmMode === 'list' ? 'on' : ''}" data-act="crm-mode" data-m="list">قائمة</button></div>
-      ${can('crm', 'add') ? `<button class="btn btn-gold btn-sm" data-act="client-new">${ic('plus')} عميل</button>` : ''}<button class="btn btn-ghost btn-sm" data-act="crm-export" ${can('crm', 'export') ? '' : 'disabled title="يتطلب صلاحية التصدير"'}>${ic('download')} تصدير</button>`})}`;
-};
-ACT['crm-mode'] = (el) => { UI.crmMode = el.dataset.m; renderAdmin(); };
-ACT['crm-export'] = () => exportDialog('العملاء', [['الاسم', 'الجوال', 'البريد', 'الخدمة', 'المصدر', 'الحالة', 'المسؤول', 'المتابعة القادمة'], ...visibleClients().map(c => [c.name, showPhone(c.phone), showEmail(c.email), REQ_TYPES[c.service]?.ar, SOURCES[c.source]?.ar, CRM_STATUS[c.status].ar, userName(c.owner), c.nextFollow])], 'crm');
-ACT['client-new'] = () => { if (!guard('crm', 'add')) return; const c = {id:uid('c'), name:'', phone:'', email:'', company:'', service:'contact', source:'visit', status:'new', owner:me().id, nextFollow:today(), createdAt:new Date().toISOString(), log:[], notes:'', _new:true}; openClient(c); };
-ACT['open-client'] = (el) => openClient(S.clients.find(c => c.id === el.dataset.id));
-function openClient(c) {
-  if (!c) return; const ed = can('crm', c._new ? 'add' : 'edit'); const dis = ed ? '' : 'disabled';
-  const reqs = S.requests.filter(r => (c.email && r.email === c.email) || (c.phone && r.phone === c.phone));
-  const ks = S.contracts.filter(k => k.clientId === c.id);
-  openModal({size:'xl', title:c._new ? 'عميل جديد' : esc(c.name), sub:c._new ? '' : `ملف العميل منذ ${fmtDate(c.createdAt)}`, body:`<div class="detail"><div style="display:grid;gap:14px;align-content:start">
-    <div class="form"><div class="row">${fld('cl-name', 'الاسم', inp('cl-name', c.name, 'text', dis))}${fld('cl-co', 'الشركة', inp('cl-co', c.company, 'text', dis))}</div>
-    <div class="row">${fld('cl-phone', 'الجوال', inp('cl-phone', c._new ? '' : showPhone(c.phone), 'tel', dis + ' dir="ltr"'))}${fld('cl-email', 'البريد', inp('cl-email', c._new ? '' : showEmail(c.email), 'email', dis + ' dir="ltr"'))}</div>
-    <div class="row">${fld('cl-svc', 'الخدمة المطلوبة', `<select class="input" id="cl-svc" ${dis}>${options(Object.entries(REQ_TYPES).map(([k, v]) => [k, v.ar]), c.service)}</select>`)}${fld('cl-src', 'مصدر العميل', `<select class="input" id="cl-src" ${dis}>${options(Object.entries(SOURCES).map(([k, v]) => [k, v.ar]), c.source)}</select>`)}</div>
-    <div class="row">${fld('cl-st', 'حالة العميل', `<select class="input" id="cl-st" ${dis}>${options(Object.entries(CRM_STATUS).map(([k, v]) => [k, v.ar]), c.status)}</select>`)}${fld('cl-own', 'الموظف المسؤول', `<select class="input" id="cl-own" ${can('crm', 'assign') ? '' : 'disabled'}><option value="">—</option>${options(staffOpts(), c.owner)}</select>`)}</div>
-    <div class="row">${fld('cl-next', 'موعد المتابعة القادمة', inp('cl-next', c.nextFollow, 'date', dis))}<div></div></div>
-    ${fld('cl-notes', 'ملاحظات الموظفين', `<textarea class="input" id="cl-notes" ${dis} placeholder="مثال: السعر أعلى من ميزانيته — يعاود بعد 3 أشهر">${esc(c.notes)}</textarea>`)}
-    ${ed ? `<button class="btn btn-gold" id="cl-save" style="justify-self:start">حفظ</button>` : lockNote('تعديل ملف العميل يتطلب صلاحية «تعديل» في CRM.')}</div>
-    ${customerData() || c._new ? '' : `<div class="notice">${ic('lock')}<div>بيانات التواصل مخفية جزئيًا لأن دورك لا يملك صلاحية «بيانات العملاء».</div></div>`}
-  </div><div style="display:grid;gap:14px;align-content:start">${c._new ? '' : `
-    <div class="panel"><div class="panel-head"><h2>سجل المكالمات والتحديثات</h2></div><div class="panel-body"><div class="timeline">${c.log.map(l => `<div class="tl"><i class="${l.kind === 'web' ? '' : 'note'}"></i><div><p>${esc(l.text)}</p><span>${esc(userName(l.by))} · ${fmtDate(l.at, true)}</span></div></div>`).join('') || '<p class="muted">لا يوجد سجل بعد</p>'}</div>
-      ${ed ? `<div class="toolbar"><select class="input" id="lg-kind" aria-label="النوع">${options([['call', 'مكالمة'], ['whatsapp', 'واتساب'], ['visit', 'زيارة'], ['email', 'بريد']])}</select><input class="input search" id="lg-text" placeholder="ملخص المكالمة أو التحديث"><button class="btn btn-ghost btn-sm" id="lg-add">تسجيل</button></div>` : ''}</div></div>
-    <div class="panel"><div class="panel-head"><h2>الطلبات المرتبطة</h2></div>${table(['الطلب', 'الحالة'], reqs.map(r => `<tr class="click" data-act="open-req" data-id="${r.id}"><td class="ltr" style="text-align:start">${r.id} <span class="sub">${esc(REQ_TYPES[r.type].ar)}</span></td><td>${stChip(r.status)}</td></tr>`), 'لا توجد طلبات')}</div>
-    ${ks.length ? `<div class="panel"><div class="panel-head"><h2>العقود</h2></div>${table(['العقد', 'ينتهي'], ks.map(k => `<tr><td class="ltr" style="text-align:start">${k.id}</td><td>${fmtDate(k.end)}</td></tr>`))}</div>` : ''}`}
-  </div></div>`, onMount:(m) => {
-    const sv = m.querySelector('#cl-save'); if (sv) sv.onclick = () => {
-      const g = (id) => m.querySelector('#' + id).value.trim();
-      if (!g('cl-name')) return toast('أدخل اسم العميل', true);
-      const before = {الحالة:CRM_STATUS[c.status].ar, المسؤول:userName(c.owner), المتابعة:c.nextFollow};
-      c.name = g('cl-name'); c.company = g('cl-co'); c.service = g('cl-svc'); c.source = g('cl-src'); c.nextFollow = g('cl-next'); c.notes = g('cl-notes');
-      if (customerData() || c._new) { c.phone = g('cl-phone'); c.email = g('cl-email'); }
-      if (g('cl-st') !== c.status) c.log.unshift({at:new Date().toISOString(), by:me().id, kind:'status', text:`تغيّرت الحالة إلى «${CRM_STATUS[g('cl-st')].ar}»`});
-      c.status = g('cl-st');
-      if (can('crm', 'assign') && g('cl-own') !== (c.owner || '')) { c.owner = g('cl-own') || null; if (c.owner) notify(c.owner, 'أُسند إليك عميل للمتابعة', c.name, 'crm'); }
-      if (c._new) { delete c._new; S.clients.unshift(c); audit('create', 'عميل: ' + c.name); }
-      else audit('crm', 'عميل: ' + c.name, before, {الحالة:CRM_STATUS[c.status].ar, المسؤول:userName(c.owner), المتابعة:c.nextFollow});
-      closeModal(); rerender(); toast('حُفظ ملف العميل');
-    };
-    const la = m.querySelector('#lg-add'); if (la) la.onclick = () => { const v = m.querySelector('#lg-text').value.trim(); if (!v) return; c.log.unshift({at:new Date().toISOString(), by:me().id, kind:m.querySelector('#lg-kind').value, text:v}); audit('crm', 'عميل: ' + c.name, null, {تحديث:v}); save(); openClient(c); };
-  }});
-}
-
-/* ---------- bookings ---------- */
-const HOURS = Array.from({length:14}, (_, i) => 8 + i);
-function weekStart(offset) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - d.getDay() + offset * 7); return d; }
-VIEWS.bookings = () => {
-  const ws = weekStart(UI.calWeek); const days = Array.from({length:7}, (_, i) => { const d = new Date(ws); d.setDate(d.getDate() + i); return d; });
-  const res = resById(UI.calRes); const bs = S.bookings.filter(b => b.resourceId === res.id && activeBooking(b));
-  const pending = S.bookings.filter(b => b.status === 'pending').sort((a, b) => a.start.localeCompare(b.start));
-  const upcoming = S.bookings.filter(b => b.status === 'confirmed' && new Date(b.end) > new Date()).sort((a, b) => a.start.localeCompare(b.start)).slice(0, 8);
-  const now = new Date();
-  const cols = days.map(d => {
-    const d0 = new Date(d), d1 = new Date(d); d0.setHours(8); d1.setHours(22);
-    const blocks = bs.filter(b => new Date(b.start) < d1 && new Date(b.end) > d0).map(b => {
-      const s = Math.max(d0, new Date(b.start)), e = Math.min(d1, new Date(b.end));
-      const top = (s - d0) / 36e5 * 44, h = Math.max(20, (e - s) / 36e5 * 44 - 3);
-      return `<div class="bk ${b.status === 'pending' ? 'pending' : ''}" style="top:${top}px;height:${h}px" data-act="open-booking" data-id="${b.id}" title="${esc(b.name)}"><b>${esc(b.name)}</b>${fmtTime(b.start)} – ${fmtTime(b.end)}${b.status === 'pending' ? ' · بانتظار الموافقة' : ''}</div>`; }).join('');
-    const pastH = d.toDateString() === now.toDateString() ? Math.max(0, Math.min(14, (now - d0) / 36e5)) : (d < now ? 14 : 0);
-    return `<div class="cal-col" data-act="cal-slot" data-date="${d.toISOString().slice(0, 10)}">${pastH ? `<div class="cal-past" style="height:${pastH * 44}px"></div>` : ''}${blocks}</div>`;
-  }).join('');
-  return `${panel('تقويم الحجوزات', `<div class="toolbar" style="margin-bottom:14px;justify-content:space-between">
-      <div class="toolbar"><select class="input" id="cal-res" aria-label="المساحة">${options(S.resources.map(r => [r.id, `${L(r.name, 'ar')} (${r.cap})`]), UI.calRes)}</select>
-      <div class="seg"><button data-act="cal-week" data-d="-1" aria-label="الأسبوع السابق">${ic('arrow')}</button><button data-act="cal-week" data-d="0" class="${UI.calWeek === 0 ? 'on' : ''}">هذا الأسبوع</button><button data-act="cal-week" data-d="1" aria-label="الأسبوع التالي">${ic('back')}</button></div></div>
-      <div class="legend"><span><i style="background:linear-gradient(135deg,#E6C46C,#C79A3E)"></i>مؤكد</span><span><i style="border:1px dashed var(--warn);background:var(--warn-soft)"></i>بانتظار الموافقة</span><span><i style="background:var(--surface-2)"></i>وقت مضى</span></div></div>
-    <div class="tbl-wrap"><div class="cal2"><div class="ch"></div>${days.map(d => `<div class="ch ${d.toDateString() === now.toDateString() ? 'today' : ''}">${d.toLocaleDateString('ar-SA-u-nu-latn-ca-gregory', {weekday:'short', day:'numeric', month:'short'})}</div>`).join('')}
-      <div class="hrs">${HOURS.map(h => `<div class="hr">${h}:00</div>`).join('')}</div>${cols}</div></div>
-    <p class="muted" style="font-size:13px;margin-top:10px">${can('bookings', 'add') ? 'اضغط على أي وقت فارغ لإضافة حجز. ' : ''}يمنع النظام الحجز المكرر في الوقت نفسه${res.kind === 'desk' ? '، وفي المقاعد المرنة يتحقق من السعة (' + res.cap + ' مقعدًا)' : ''}.</p>`,
-    {sub:`${L(res.name, 'ar')} — السعة ${res.cap}`, actions:`${can('bookings', 'add') ? `<button class="btn btn-gold btn-sm" data-act="booking-new">${ic('plus')} حجز جديد</button>` : ''}<button class="btn btn-ghost btn-sm" data-act="booking-export" ${can('bookings', 'export') ? '' : 'disabled'}>${ic('download')} تصدير</button>`})}
-  <div class="cols even">${panel('بانتظار الموافقة', table(['العميل', 'المساحة', 'الموعد', ''], pending.map(b => `<tr><td><b>${esc(b.name)}</b><span class="sub">${b.people} أشخاص</span></td><td>${esc(L(resById(b.resourceId).name, 'ar'))}</td><td>${fmtDate(b.start, true)}</td>
-      <td>${can('bookings', 'approve') ? `<div class="toolbar" style="flex-wrap:nowrap"><button class="btn btn-gold btn-xs" data-act="bk-status" data-id="${b.id}" data-s="confirmed">موافقة</button><button class="btn btn-danger btn-xs" data-act="bk-status" data-id="${b.id}" data-s="rejected">رفض</button></div>` : '<span class="chip plain">يتطلب صلاحية</span>'}</td></tr>`), 'لا توجد حجوزات معلّقة'), {pad:false, sub:'الموافقة اليدوية مفعّلة من الإعدادات'})}
-    ${panel('الحجوزات القادمة', table(['العميل', 'المساحة', 'الموعد'], upcoming.map(b => `<tr class="click" data-act="open-booking" data-id="${b.id}"><td>${esc(b.name)}</td><td>${esc(L(resById(b.resourceId).name, 'ar'))}</td><td>${fmtDate(b.start, true)}</td></tr>`)), {pad:false})}</div>`;
-};
-AFTER.bookings = () => { $('#cal-res').onchange = (e) => { UI.calRes = e.target.value; renderAdmin(); }; };
-ACT['cal-week'] = (el) => { const d = +el.dataset.d; UI.calWeek = d === 0 ? 0 : UI.calWeek + d; renderAdmin(); };
-ACT['cal-slot'] = (el, e) => {
-  if (e.target.closest('.bk')) return; if (!can('bookings', 'add')) return;
-  const y = e.clientY - el.getBoundingClientRect().top; const h = 8 + Math.floor(y / 44);
-  const start = new Date(`${el.dataset.date}T${String(h).padStart(2, '0')}:00:00`);
-  if (start < new Date()) return toast('لا يمكن الحجز في وقت مضى', true);
-  openBooking({resourceId:UI.calRes, start:start.toISOString(), end:new Date(+start + 36e5).toISOString(), _new:true});
-};
-ACT['booking-new'] = () => { const s = new Date(); s.setDate(s.getDate() + 1); s.setHours(10, 0, 0, 0); openBooking({resourceId:UI.calRes, start:s.toISOString(), end:new Date(+s + 36e5).toISOString(), _new:true}); };
-ACT['open-booking'] = (el, e) => { e.stopPropagation(); openBooking(S.bookings.find(b => b.id === el.dataset.id)); };
-ACT['booking-export'] = () => exportDialog('الحجوزات', [['العميل', 'المساحة', 'من', 'إلى', 'الأشخاص', 'الحالة', 'السعر', 'كود الخصم'], ...S.bookings.map(b => [b.name, L(resById(b.resourceId).name, 'ar'), fmtDate(b.start, true), fmtDate(b.end, true), b.people, b.status, b.price, b.code])], 'bookings');
-ACT['bk-status'] = (el) => {
-  if (!guard('bookings', 'approve')) return; const b = S.bookings.find(x => x.id === el.dataset.id); const before = b.status; b.status = el.dataset.s;
-  if (b.reqId) { const r = S.requests.find(x => x.id === b.reqId); if (r) setReqStatus(r, b.status === 'confirmed' ? 'approved' : 'rejected'); }
-  audit('booking', `${b.name} — ${L(resById(b.resourceId).name, 'ar')}`, {الحالة:before}, {الحالة:b.status});
-  (S.outbox = S.outbox || []).unshift({at:new Date().toISOString(), to:b.email || b.phone, subject:b.status === 'confirmed' ? 'تأكيد الحجز وتذكير قبل الموعد بيوم' : 'اعتذار عن الحجز', channel:'whatsapp'});
-  rerender(); toast(b.status === 'confirmed' ? 'أُكّد الحجز وأُرسل تأكيد للعميل' : 'رُفض الحجز وأُبلغ العميل');
-};
-const pad2 = (n) => String(n).padStart(2, '0');
-const localDT = (iso) => { const d = new Date(iso); return {date:`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`, time:`${pad2(d.getHours())}:${pad2(d.getMinutes())}`}; };
-function openBooking(b) {
-  if (!b) return; const isNew = !!b._new; const ed = can('bookings', isNew ? 'add' : 'edit'); const dis = ed ? '' : 'disabled';
-  const s = localDT(b.start), e = localDT(b.end);
-  openModal({title:isNew ? 'حجز جديد' : 'تفاصيل الحجز', sub:isNew ? 'يتحقق النظام من التعارض قبل الحفظ' : `أُنشئ ${fmtDate(b.createdAt, true)} · ${b.by === 'web' ? 'من الموقع' : esc(userName(b.by))}`, body:`<div class="form">
-    ${fld('bk-res', 'المساحة', `<select class="input" id="bk-res" ${dis}>${options(S.resources.map(r => [r.id, `${L(r.name, 'ar')} (السعة ${r.cap})`]), b.resourceId)}</select>`)}
-    <div class="row">${fld('bk-name', 'اسم العميل', inp('bk-name', b.name || '', 'text', dis))}${fld('bk-phone', 'الجوال', inp('bk-phone', isNew ? '' : showPhone(b.phone || ''), 'tel', dis + ' dir="ltr"'))}</div>
-    <div class="row">${fld('bk-date', 'التاريخ', inp('bk-date', s.date, 'date', dis))}${fld('bk-people', 'عدد الأشخاص', inp('bk-people', b.people || 1, 'number', dis + ' min="1"'))}</div>
-    <div class="row">${fld('bk-s', 'من', inp('bk-s', s.time, 'time', dis + ' step="1800"'))}${fld('bk-e', 'إلى', inp('bk-e', e.date === s.date ? e.time : '22:00', 'time', dis + ' step="1800"'))}</div>
-    <div class="row">${fld('bk-code', 'كود الخصم', inp('bk-code', b.code || '', 'text', dis + ' dir="ltr"'))}${fld('bk-st', 'الحالة', `<select class="input" id="bk-st" ${can('bookings', 'approve') ? '' : 'disabled'}>${options([['confirmed', 'مؤكد'], ['pending', 'بانتظار الموافقة'], ['cancelled', 'ملغي'], ['rejected', 'مرفوض']], b.status || 'confirmed')}</select>`)}</div>
-    ${fld('bk-notes', 'ملاحظات', `<textarea class="input" id="bk-notes" ${dis} style="min-height:70px">${esc(b.notes || '')}</textarea>`)}
-    <div class="notice bad hidden" id="bk-err">${ic('alert')}<div id="bk-err-t"></div></div>
-    <div class="toolbar">${ed ? `<button class="btn btn-gold" id="bk-save">حفظ</button>` : lockNote('تعديل الحجز يتطلب صلاحية.')}
-      ${!isNew ? `<button class="btn btn-ghost btn-sm" id="bk-remind">${ic('bell')} إرسال تذكير</button>` : ''}
-      ${!isNew && can('bookings', 'delete') ? `<button class="btn btn-danger btn-sm" id="bk-del">${ic('trash')} حذف</button>` : ''}</div></div>`,
-  onMount:(m) => {
-    const g = (id) => m.querySelector('#' + id).value.trim();
-    const sv = m.querySelector('#bk-save'); if (sv) sv.onclick = () => {
-      const start = new Date(`${g('bk-date')}T${g('bk-s')}:00`), end = new Date(`${g('bk-date')}T${g('bk-e')}:00`);
-      const err = (t2) => { m.querySelector('#bk-err-t').textContent = t2; m.querySelector('#bk-err').classList.remove('hidden'); };
-      if (!g('bk-name')) return err('أدخل اسم العميل');
-      if (!(end > start)) return err('وقت النهاية يجب أن يكون بعد البداية');
-      if (isNew && start < new Date()) return err('لا يمكن الحجز في وقت مضى');
-      const r = resById(g('bk-res')); if (+g('bk-people') > r.cap) return err(`السعة القصوى ${r.cap} أشخاص`);
-      const st = g('bk-st');
-      if (st !== 'cancelled' && st !== 'rejected') { const c = bookingConflict(r.id, start, end, g('bk-people'), b.id); if (c) return err(`يتعارض مع حجز «${c[0].name}» من ${fmtTime(c[0].start)} إلى ${fmtTime(c[0].end)}. اختر وقتًا آخر.`); }
-      if (g('bk-code') && !S.codes.find(x => x.active && x.code.toUpperCase() === g('bk-code').toUpperCase())) return err('كود الخصم غير صالح');
-      const before = isNew ? null : {الوقت:`${fmtDate(b.start, true)}`, الحالة:b.status};
-      Object.assign(b, {resourceId:r.id, name:g('bk-name'), people:+g('bk-people'), start:start.toISOString(), end:end.toISOString(), code:g('bk-code'), status:st, notes:g('bk-notes')});
-      if (customerData() || isNew) b.phone = g('bk-phone');
-      b.price = bookingPrice({resource:r.id, unit:'hour', date:g('bk-date'), start:g('bk-s'), end:g('bk-e'), code:b.code});
-      if (isNew) { delete b._new; Object.assign(b, {id:uid('b'), by:me().id, createdAt:new Date().toISOString(), email:''}); S.bookings.push(b); }
-      audit('booking', `${b.name} — ${L(r.name, 'ar')}`, before, {الوقت:fmtDate(b.start, true), الحالة:b.status, السعر:b.price});
-      UI.calRes = r.id; closeModal(); rerender(); toast('حُفظ الحجز');
-    };
-    const rm = m.querySelector('#bk-remind'); if (rm) rm.onclick = () => { (S.outbox = S.outbox || []).unshift({at:new Date().toISOString(), to:b.name, subject:fillTpl('booking_reminder', {space:L(resById(b.resourceId).name, 'ar'), time:fmtTime(b.start)}), channel:'whatsapp'}); save(); toast('أُرسل التذكير (محاكاة واتساب)'); };
-    const dl = m.querySelector('#bk-del'); if (dl) dl.onclick = () => confirmBox('حذف هذا الحجز نهائيًا؟', () => { S.bookings = S.bookings.filter(x => x.id !== b.id); audit('delete', 'حجز: ' + b.name, {الوقت:fmtDate(b.start, true)}, null); rerender(); });
-  }});
-}
-
-/* ---------- contracts ---------- */
-const kStatus = (k) => { const d = daysBetween(today(), k.end); return d < 0 ? ['منتهي', 'bad'] : d <= 30 ? [`ينتهي بعد ${d} يوم`, 'warn'] : ['نشط', 'ok']; };
-VIEWS.contracts = () => {
-  const fin = can('contracts', 'finance'); const M = metrics(); const rem = (k) => k.total - k.paid;
-  return `<div class="tiles">${tile('عقود نشطة', S.contracts.filter(k => daysBetween(today(), k.end) >= 0).length, {icon:'contract'})}${tile('تنتهي خلال 30 يومًا', M.expiring.length, {icon:'alert'})}
-    ${tile('مبالغ مستحقة (ر.س)', money(M.outstanding), {icon:'coins', locked:!fin})}${tile('تأمينات محتجزة (ر.س)', money(M.deposits), {icon:'lock', locked:!fin})}</div>
-  ${M.expiring.length ? `<div class="notice warn">${ic('alert')}<div>${M.expiring.map(k => `العقد <b class="ltr">${k.id}</b> (${esc(k.client)}) ينتهي بعد ${daysBetween(today(), k.end)} يوم.`).join(' ')} <a href="#admin" data-act="open-contract" data-id="${M.expiring[0].id}">فتح العقد</a></div></div>` : ''}
-  ${panel('العقود والاشتراكات', table(['العقد', 'العميل', 'المساحة', 'المدة', 'الشهري', 'المدفوع / المتبقي', 'الحالة'], S.contracts.map(k => { const [sl, sc] = kStatus(k);
-    return `<tr class="click" data-act="open-contract" data-id="${k.id}"><td class="ltr" style="text-align:start"><b>${k.id}</b></td><td>${esc(k.client)}</td><td>${esc(L(resById(k.resourceId)?.name, 'ar'))}</td><td>${fmtDate(k.start)} ← ${fmtDate(k.end)}</td>
-    <td class="num">${fin ? money(k.monthly) : '•••'}</td><td class="num">${fin ? `${money(k.paid)} / <span class="${rem(k) ? 'gold' : ''}">${money(rem(k))}</span>` : '•••'}</td><td><span class="chip ${sc}">${sl}</span></td></tr>`; })),
-    {pad:false, sub:fin ? '' : 'المبالغ مخفية — تتطلب صلاحية «بيانات مالية»', actions:`${can('contracts', 'add') ? `<button class="btn btn-gold btn-sm" data-act="contract-new">${ic('plus')} عقد جديد</button>` : ''}<button class="btn btn-ghost btn-sm" data-act="contract-export" ${can('contracts', 'export') ? '' : 'disabled'}>${ic('download')} تصدير</button>`})}`;
-};
-ACT['contract-export'] = () => { const fin = can('contracts', 'finance'); exportDialog('العقود', [['العقد', 'العميل', 'المساحة', 'البداية', 'النهاية', 'الشهري', 'المدفوع', 'المتبقي', 'التأمين'], ...S.contracts.map(k => [k.id, k.client, L(resById(k.resourceId)?.name, 'ar'), k.start, k.end, fin ? k.monthly : '—', fin ? k.paid : '—', fin ? k.total - k.paid : '—', fin ? k.deposit : '—'])], 'contracts'); };
-ACT['contract-new'] = () => { if (!guard('contracts', 'add')) return; openContract({_new:true, id:'K-' + (200 + S.contracts.length + 1), client:'', clientId:'', resourceId:'r4', start:today(), months:6, monthly:4500, paid:0, deposit:0, payments:[], file:'', renewals:0}); };
-ACT['open-contract'] = (el) => openContract(S.contracts.find(k => k.id === el.dataset.id));
-function openContract(k) {
-  if (!k) return; const fin = can('contracts', 'finance'), ed = can('contracts', k._new ? 'add' : 'edit');
-  openModal({size:'wide', title:k._new ? 'عقد جديد' : `العقد <span class="ltr">${k.id}</span>`, sub:k._new ? '' : esc(k.client), body:k._new ? `<div class="form">
-      ${fld('k-cl', 'العميل', `<select class="input" id="k-cl">${options(S.clients.map(c => [c.id, c.name]))}</select>`)}
-      <div class="row">${fld('k-res', 'نوع المكتب', `<select class="input" id="k-res">${options(S.resources.filter(r => r.rate.month).map(r => [r.id, L(r.name, 'ar')]), 'r4')}</select>`)}${fld('k-start', 'تاريخ البداية', inp('k-start', today(), 'date'))}</div>
-      <div class="row">${fld('k-months', 'مدة الاشتراك (أشهر)', inp('k-months', 6, 'number', 'min="1"'))}${fld('k-monthly', 'القيمة الشهرية (ر.س)', inp('k-monthly', 4500, 'number', 'min="0"'))}</div>
-      <div class="row">${fld('k-dep', 'التأمين أو العربون (ر.س)', inp('k-dep', 0, 'number', 'min="0"'))}${fld('k-file', 'نسخة العقد', '<input class="input" type="file" id="k-file" accept=".pdf">')}</div>
-      <button class="btn btn-gold" id="k-save" style="justify-self:start">إنشاء العقد</button></div>` : `
-    <div class="detail"><div style="display:grid;gap:14px;align-content:start"><dl class="kv"><dt>المساحة</dt><dd>${esc(L(resById(k.resourceId)?.name, 'ar'))}</dd><dt>المدة</dt><dd>${k.months} أشهر — ${fmtDate(k.start)} إلى ${fmtDate(k.end)}</dd>
-      <dt>الحالة</dt><dd><span class="chip ${kStatus(k)[1]}">${kStatus(k)[0]}</span></dd><dt>مرات التجديد</dt><dd>${k.renewals}</dd>
-      ${fin ? `<dt>القيمة الشهرية</dt><dd class="num">${money(k.monthly)} ر.س</dd><dt>الإجمالي</dt><dd class="num">${money(k.total)} ر.س</dd><dt>المدفوع</dt><dd class="num">${money(k.paid)} ر.س</dd><dt>المتبقي</dt><dd class="num gold">${money(k.total - k.paid)} ر.س</dd><dt>التأمين</dt><dd class="num">${money(k.deposit)} ر.س</dd>` : ''}
-      <dt>نسخة العقد</dt><dd>${can('contracts', 'files') ? `${ic('doc', '')} ${esc(k.file || '—')}` : 'تتطلب صلاحية الملفات'}</dd></dl>
-      ${fin ? '' : lockNote('المبالغ والدفعات مخفية لأن دورك لا يملك صلاحية «بيانات مالية».')}
-      ${ed ? `<div class="toolbar"><button class="btn btn-ghost btn-sm" id="k-renew">${ic('refresh')} تجديد الاشتراك</button><button class="btn btn-ghost btn-sm" id="k-alert">${ic('bell')} إرسال تنبيه الانتهاء</button>${can('contracts', 'print') ? `<button class="btn btn-ghost btn-sm" data-act="print">${ic('print')} طباعة</button>` : ''}</div>` : ''}</div>
-    <div>${fin ? `<div class="panel"><div class="panel-head"><h2>الدفعات</h2></div>${table(['التاريخ', 'المبلغ', 'الطريقة'], k.payments.map(p => `<tr><td>${fmtDate(p.at)}</td><td class="num">${money(p.amount)}</td><td>${esc(p.method)}</td></tr>`), 'لا توجد دفعات')}
-      ${ed ? `<div class="panel-body"><div class="toolbar"><input class="input" id="pay-amt" type="number" min="1" placeholder="المبلغ" style="width:120px" aria-label="المبلغ"><select class="input" id="pay-m" aria-label="الطريقة">${options([['تحويل بنكي', 'تحويل بنكي'], ['مدى', 'مدى'], ['نقدًا', 'نقدًا']])}</select><button class="btn btn-gold btn-sm" id="pay-add">تسجيل دفعة</button></div></div>` : ''}</div>` : ''}</div></div>`,
-  onMount:(m) => {
-    const g = (id) => m.querySelector('#' + id)?.value;
-    const sv = m.querySelector('#k-save'); if (sv) sv.onclick = () => {
-      const cl = S.clients.find(c => c.id === g('k-cl')); const s = new Date(g('k-start') + 'T12:00:00'); const e = new Date(s); e.setMonth(e.getMonth() + +g('k-months'));
-      Object.assign(k, {client:cl.name, clientId:cl.id, resourceId:g('k-res'), start:g('k-start'), end:e.toISOString().slice(0, 10), months:+g('k-months'), monthly:+g('k-monthly'), total:+g('k-monthly') * +g('k-months'), deposit:+g('k-dep'), file:m.querySelector('#k-file').files[0]?.name || '', status:'active'});
-      delete k._new; S.contracts.unshift(k); cl.status = 'contracted'; cl.log.unshift({at:new Date().toISOString(), by:me().id, kind:'status', text:`تم التعاقد — ${k.id}`});
-      audit('contract', k.id, null, {العميل:k.client, المدة:k.months + ' أشهر'}); closeModal(); rerender(); toast('أُنشئ العقد');
-    };
-    const pa = m.querySelector('#pay-add'); if (pa) pa.onclick = () => { const a = +g('pay-amt'); if (!(a > 0)) return toast('أدخل مبلغًا صحيحًا', true); k.payments.push({at:today(), amount:a, method:g('pay-m')}); k.paid += a; audit('payment', k.id, null, {المبلغ:a}); rerender(); openContract(k); toast('سُجّلت الدفعة'); };
-    const rn = m.querySelector('#k-renew'); if (rn) rn.onclick = () => { const before = k.end; const e = new Date(k.end + 'T12:00:00'); e.setMonth(e.getMonth() + k.months); k.end = e.toISOString().slice(0, 10); k.total += k.monthly * k.months; k.renewals++; audit('contract', k.id, {النهاية:before}, {النهاية:k.end, التجديد:k.renewals}); rerender(); openContract(k); toast('جُدّد الاشتراك'); };
-    const al = m.querySelector('#k-alert'); if (al) al.onclick = () => { (S.outbox = S.outbox || []).unshift({at:new Date().toISOString(), to:k.client, subject:fillTpl('contract_expiry', {name:k.client, space:L(resById(k.resourceId)?.name, 'ar'), date:fmtDate(k.end)}), channel:'email'}); save(); toast('أُرسل تنبيه الانتهاء (محاكاة)'); };
-  }});
-}
 
 /* ---------- events ---------- */
 VIEWS.events = () => {
@@ -699,11 +407,11 @@ VIEWS.users = () => {
   else if (tab === 'branches') body = panel('الفروع', `<div>${S.branches.map(b => `<div class="list-item">${ic('branch')}<div class="grow"><b>${esc(b.name)}</b><span>${S.users.filter(u => u.branch === b.id).length} موظفين · ${S.resources.filter(r => r.branch === b.id).length} مساحات</span></div></div>`).join('')}</div>
     <div class="panel-body"><p class="muted" style="font-size:14px">النظام مبني لدعم أكثر من فرع: لكل فرع مساحاته وأسعاره وموظفوه ومديره وتقاريره، ويُقيَّد الموظف بفرعه.</p>${own ? `<div class="toolbar" style="margin-top:10px"><input class="input" id="br-n" placeholder="اسم الفرع الجديد" aria-label="اسم الفرع"><button class="btn btn-ghost btn-sm" id="br-add">${ic('plus')} إضافة فرع</button></div>` : ''}</div>`, {pad:false});
   else body = panel('المستخدمون', table(['المستخدم', 'الدور', 'الحالة', 'التحقق بخطوتين', 'الفرع', 'صلاحيات خاصة', 'آخر دخول'], S.users.map(u => {
-    const ovs = (u.overrides || []).length; const st = u.locked ? ['مقفل', 'bad'] : u.status === 'active' ? ['نشط', 'ok'] : ['موقوف', 'bad'];
+    const ovs = (u.overrides || []).length; const st = isLocked(u.email) ? ['مقفل مؤقتًا', 'bad'] : u.status === 'active' ? ['نشط', 'ok'] : u.status === 'invited' ? (new Date(u.inviteExpires) < new Date() ? ['دعوة منتهية', 'plain'] : ['دعوة مرسلة', 'info']) : ['موقوف', 'bad'];
     return `<tr class="click" data-act="open-user" data-id="${u.id}"><td>${av(u.name)} <b>${esc(u.name)}</b><span class="sub ltr" style="text-align:start">${esc(u.email)}</span></td><td>${esc(roleById(u.roleId)?.name)}${u.roleId === 'owner' ? ` <span class="chip">${ic('shield')}محمي</span>` : ''}</td>
-    <td><span class="chip ${st[1]}">${st[0]}</span></td><td>${u.twoFA || (S.security.require2FA && ['owner', 'ops'].includes(u.roleId)) ? '<span class="chip ok">مفعّل</span>' : '<span class="chip plain">غير مفعّل</span>'}</td>
+    <td><span class="chip ${st[1]}">${st[0]}</span></td><td>${needs2FA(u) ? `<span class="chip ok">${u.twoFAMethod === 'sms' ? 'رسالة نصية' : 'تطبيق'}${mandatory2FA(u) ? ' · إلزامي' : ''}</span>` : '<span class="chip plain">اختياري — غير مفعّل</span>'}</td>
     <td>${esc(S.branches.find(b => b.id === u.branch)?.name || '')}</td><td>${ovs ? `<span class="chip info">${ovs}</span>` : '—'}</td><td>${u.lastLogin ? ago(u.lastLogin) : '—'}</td></tr>`; })),
-    {pad:false, sub:'لا يُسمح بمشاركة حساب واحد بين أكثر من موظف', actions:can('users', 'add') ? `<button class="btn btn-gold btn-sm" data-act="user-new">${ic('plus')} مستخدم جديد</button>` : ''});
+    {pad:false, sub:'لا يُسمح بمشاركة حساب واحد بين أكثر من موظف', actions:can('users', 'add') ? `<button class="btn btn-gold btn-sm" data-act="user-invite">${ic('mail')} دعوة موظف</button>` : ''});
   return `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" class="${tab === k ? 'on' : ''}" data-act="users-tab" data-k="${k}">${l}</button>`).join('')}</div>
     ${own ? '' : `<div class="notice">${ic('lock')}<div>منح الصلاحيات وسحبها وإنشاء الأدوار متاح لمالك النظام فقط.${can('users', 'edit') ? ' يمكنك تعديل بيانات الموظفين وحالتهم ضمن صلاحيتك.' : ''}</div></div>`}${body}`;
 };
@@ -719,24 +427,18 @@ function rolesHTML() {
     {pad:false, actions:own ? `<button class="btn btn-gold btn-sm" data-act="role-new">${ic('plus')} دور جديد</button>` : ''})}
   ${panel(esc(r.name), r.id === 'owner' ? `<div class="notice">${ic('shield')}<div>المالك يملك جميع الصلاحيات دائمًا. لا يستطيع أي مدير أو موظف تعديل صلاحياته أو حذف حسابه، وتُنقل الملكية من الإعدادات فقط.</div></div>` :
     `<p class="muted" style="margin-bottom:12px">${esc(r.desc)}</p>
-    <div class="setting" style="padding-top:0"><div><b>نطاق الطلبات</b><span>تقييد مستخدمي هذا الدور بالطلبات وملفات العملاء المسندة إليهم فقط</span></div><label class="switchx"><input type="checkbox" id="role-scope" ${r.scope === 'assigned' ? 'checked' : ''} ${own ? '' : 'disabled'} aria-label="المسندة فقط"><span></span></label></div>
+    <div class="setting" style="padding-top:0"><div><b>نطاق البيانات</b><span>ما يراه مستخدمو هذا الدور من الطلبات والعملاء والصفقات والحجوزات</span></div><select class="input" id="role-scope" ${own ? '' : 'disabled'} style="width:auto" aria-label="نطاق البيانات">${options([['all', 'كل الفروع'], ['branch', 'فرعه + غير المُسند + المُسند إليه'], ['assigned', 'المُسند إليه فقط']], r.scope || 'all')}</select></div>
     ${matrixHTML((mk, a) => r.perms.includes(mk + '.' + a), {editable:own, idp:'rp'})}
     ${own ? `<div class="toolbar" style="margin-top:14px"><button class="btn btn-gold btn-sm" data-act="role-save" data-id="${r.id}">حفظ صلاحيات الدور</button>${ROLE_DEFAULTS[r.id] ? `<button class="btn btn-ghost btn-sm" data-act="role-reset" data-id="${r.id}">${ic('refresh')} إعادة للوضع الافتراضي</button>` : ''}${!r.system ? `<button class="btn btn-danger btn-sm" data-act="role-del" data-id="${r.id}">${ic('trash')} حذف الدور</button>` : ''}</div>` : ''}`,
     {sub:r.id === 'owner' ? '' : 'تنطبق على كل من يحمل هذا الدور، ويمكن تخصيص كل موظف على حدة من ملفه.'})}</div>`;
 }
 ACT['role-sel'] = (el) => { UI.roleSel = el.dataset.id; renderAdmin(); };
-ACT['role-save'] = (el) => { if (!isOwner()) return; const r = roleById(el.dataset.id); const before = r.perms.length; r.perms = $$('[data-rp]:checked').map(i => i.dataset.rp); r.scope = $('#role-scope').checked ? 'assigned' : 'all'; audit('perm', 'دور: ' + r.name, {عدد_الصلاحيات:before}, {عدد_الصلاحيات:r.perms.length, النطاق:r.scope === 'assigned' ? 'المسندة فقط' : 'الكل'}); rerender(); toast('حُفظت صلاحيات الدور'); };
+ACT['role-save'] = (el) => { if (!isOwner()) return; const r = roleById(el.dataset.id); const before = r.perms.length; r.perms = $$('[data-rp]:checked').map(i => i.dataset.rp); r.scope = $('#role-scope').value; audit('perm', 'دور: ' + r.name, {عدد_الصلاحيات:before}, {عدد_الصلاحيات:r.perms.length, النطاق:{all:'الكل', branch:'الفرع', assigned:'المسندة فقط'}[r.scope]}); rerender(); toast('حُفظت صلاحيات الدور'); };
 ACT['role-reset'] = (el) => { const r = roleById(el.dataset.id); confirmBox(`إعادة صلاحيات «${esc(r.name)}» إلى الوضع الافتراضي؟`, () => { r.perms = [...ROLE_DEFAULTS[r.id]]; audit('perm', 'دور: ' + r.name, null, {إعادة:'الوضع الافتراضي'}); rerender(); }, 'إعادة', false); };
 ACT['role-del'] = (el) => { const r = roleById(el.dataset.id); if (S.users.some(u => u.roleId === r.id)) return toast('انقل مستخدمي هذا الدور إلى دور آخر قبل حذفه', true); confirmBox(`حذف الدور «${esc(r.name)}»؟`, () => { S.roles = S.roles.filter(x => x.id !== r.id); UI.roleSel = 'ops'; audit('perm', 'حذف دور: ' + r.name); rerender(); }); };
 ACT['role-new'] = () => { if (!isOwner()) return;
   openModal({title:'دور جديد', sub:'مثل: موظف خدمة عملاء، مسؤول تسويق، مشرف دورات، مدير فرع', body:`<div class="form">${fld('rn-n', 'اسم الدور', inp('rn-n'))}${fld('rn-b', 'ابدأ بصلاحيات', `<select class="input" id="rn-b"><option value="">بدون صلاحيات</option>${options(S.roles.filter(r => r.id !== 'owner').map(r => [r.id, 'نسخ من: ' + r.name]))}</select>`)}${fld('rn-d', 'وصف', inp('rn-d'))}<button class="btn btn-gold" id="rn-s" style="justify-self:start">إنشاء</button></div>`,
     onMount:(m) => m.querySelector('#rn-s').onclick = () => { const n = m.querySelector('#rn-n').value.trim(); if (!n) return toast('اكتب اسم الدور', true); const base = roleById(m.querySelector('#rn-b').value); const r = {id:uid('role'), name:n, system:false, scope:base?.scope || 'assigned', desc:m.querySelector('#rn-d').value || 'دور مخصص', perms:base ? [...base.perms] : []}; S.roles.push(r); UI.roleSel = r.id; audit('perm', 'دور جديد: ' + n); closeModal(); rerender(); toast('أُنشئ الدور — حدّد صلاحياته الآن'); }}); };
-ACT['user-new'] = () => { if (!guard('users', 'add')) return;
-  openModal({title:'مستخدم جديد', sub:'يصل الموظف رابط لتعيين كلمة مرور قوية', body:`<div class="form"><div class="row">${fld('un-n', 'الاسم', inp('un-n'))}${fld('un-e', 'البريد', inp('un-e', '', 'email', 'dir="ltr"'))}</div>
-    <div class="row">${fld('un-r', 'الدور', `<select class="input" id="un-r">${options(S.roles.filter(r => r.id !== 'owner' && (isOwner() || r.id !== 'ops')).map(r => [r.id, r.name]), 'staff')}</select>`)}${fld('un-b', 'الفرع', `<select class="input" id="un-b">${options(S.branches.map(b => [b.id, b.name]))}</select>`)}</div>
-    <label class="check"><input type="checkbox" id="un-2fa"> فرض التحقق بخطوتين</label><p class="muted" style="font-size:13px">سياسة كلمة المرور: ${S.security.minPw} أحرف على الأقل مع حروف كبيرة وصغيرة وأرقام ورموز.</p><button class="btn btn-gold" id="un-s" style="justify-self:start">إضافة وإرسال الدعوة</button></div>`,
-    onMount:(m) => m.querySelector('#un-s').onclick = () => { const g = (i) => m.querySelector('#' + i).value.trim(); if (!g('un-n') || !/^\S+@\S+\.\S+$/.test(g('un-e'))) return toast('أدخل الاسم وبريدًا صحيحًا', true); if (S.users.some(u => u.email === g('un-e').toLowerCase())) return toast('البريد مستخدم لحساب آخر', true);
-      const u = {id:uid('u'), name:g('un-n'), email:g('un-e').toLowerCase(), roleId:g('un-r'), status:'active', twoFA:m.querySelector('#un-2fa').checked, branch:g('un-b'), overrides:[], lastLogin:null, sessions:[]}; S.users.push(u); audit('user_add', u.name, null, {الدور:roleById(u.roleId).name}); closeModal(); rerender(); toast('أُضيف المستخدم وأُرسلت الدعوة (محاكاة)'); }}); };
 ACT['open-user'] = (el) => openUser(userById(el.dataset.id));
 function openUser(u) {
   const own = isOwner(); const target_owner = u.roleId === 'owner'; const self = u.id === me().id;
@@ -750,12 +452,15 @@ function openUser(u) {
       <div class="panel"><div class="panel-body" style="display:grid;gap:12px">
         ${fld('us-role', 'الدور الوظيفي', `<select class="input" id="us-role" ${canEdit && (own || u.roleId !== 'ops') ? '' : 'disabled'}>${options(S.roles.filter(r => r.id !== 'owner' || target_owner).filter(r => own || r.id !== 'ops' || u.roleId === 'ops').map(r => [r.id, r.name]), u.roleId)}</select>`)}
         ${fld('us-br', 'الفرع', `<select class="input" id="us-br" ${canEdit ? '' : 'disabled'}>${options(S.branches.map(b => [b.id, b.name]), u.branch)}</select>`)}
-        <div class="setting"><div><b>المسندة إليه فقط</b><span>تقييده بالطلبات والعملاء المسندين إليه</span></div><label class="switchx"><input type="checkbox" id="us-scope" ${scopeAssigned(u) ? 'checked' : ''} ${own && !target_owner ? '' : 'disabled'} aria-label="المسندة فقط"><span></span></label></div>
-        <div class="setting"><div><b>التحقق بخطوتين</b><span>${['owner', 'ops'].includes(u.roleId) && S.security.require2FA ? 'إلزامي لهذا الدور' : 'اختياري'}</span></div><label class="switchx"><input type="checkbox" id="us-2fa" ${u.twoFA || (['owner', 'ops'].includes(u.roleId) && S.security.require2FA) ? 'checked' : ''} ${canEdit && !(['owner', 'ops'].includes(u.roleId) && S.security.require2FA) ? '' : 'disabled'} aria-label="التحقق بخطوتين"><span></span></label></div>
+        ${fld('us-scope', 'نطاق البيانات', `<select class="input" id="us-scope" ${own && !target_owner ? '' : 'disabled'}>${options([['', 'حسب الدور (' + ({all:'الكل', branch:'الفرع', assigned:'المُسند فقط'}[roleById(u.roleId)?.scope || 'all']) + ')'], ['all', 'كل الفروع'], ['branch', 'فرعه + غير المُسند'], ['assigned', 'المُسند إليه فقط']], u.scope || '')}</select>`)}
+        <div class="setting"><div><b>التحقق بخطوتين</b><span>${mandatory2FA(u) ? 'إلزامي لهذا الدور' : 'اختياري لهذا الدور'}${needs2FA(u) ? ` · ${(u.recovery || []).length} رموز استرداد متبقية` : ''}</span></div><label class="switchx"><input type="checkbox" id="us-2fa" ${needs2FA(u) ? 'checked' : ''} ${canEdit && !mandatory2FA(u) ? '' : 'disabled'} aria-label="التحقق بخطوتين"><span></span></label></div>
+        ${fld('us-2fam', 'طريقة التحقق', `<select class="input" id="us-2fam" ${canEdit || self ? '' : 'disabled'}>${options([['app', 'تطبيق المصادقة'], ['sms', 'رسالة نصية للجوال']], u.twoFAMethod || 'app')}</select>`)}
         ${canEdit ? `<button class="btn btn-gold btn-sm" id="us-save" style="justify-self:start">حفظ</button>` : ''}</div></div>
       <div class="panel"><div class="panel-head"><h2>الحساب والأمان</h2></div><div class="panel-body" style="display:grid;gap:8px">
-        ${u.locked ? `<div class="notice bad">${ic('lock')}<div>الحساب مقفل بعد محاولات دخول فاشلة.</div></div>` : ''}
-        ${canEdit && !self ? `${u.locked ? `<button class="btn btn-ghost btn-sm" data-act="user-unlock" data-id="${u.id}">${ic('key')} فتح القفل</button>` : ''}
+        ${isLocked(u.email) ? `<div class="notice bad">${ic('lock')}<div>الحساب مقفل مؤقتًا بعد محاولات دخول فاشلة — يُفتح تلقائيًا ${esc(lockLeft(u.email))}.</div></div>` : ''}
+        ${u.status === 'invited' ? `<div class="notice ${new Date(u.inviteExpires) < new Date() ? 'warn' : ''}">${ic('mail')}<div>${new Date(u.inviteExpires) < new Date() ? 'انتهت صلاحية رابط الدعوة دون تفعيل.' : `دعوة مرسلة — صالحة حتى ${fmtDate(u.inviteExpires, true)}.`} <button class="lk" data-act="invite-resend" data-id="${u.id}">إعادة إرسال الدعوة</button></div></div>` : ''}
+        ${(own || canEdit) && needs2FA(u) && !self ? `<button class="btn btn-ghost btn-sm" data-act="tfa-reset" data-id="${u.id}">${ic('shield')} إعادة ضبط التحقق بخطوتين</button>` : ''}
+        ${canEdit && !self ? `${isLocked(u.email) ? `<button class="btn btn-ghost btn-sm" data-act="user-unlock" data-id="${u.id}">${ic('key')} فتح القفل الآن</button>` : ''}
           <button class="btn btn-ghost btn-sm" data-act="user-toggle" data-id="${u.id}">${u.status === 'active' ? ic('ban') + ' إيقاف الحساب مؤقتًا' : ic('check') + ' تفعيل الحساب'}</button>` : ''}
         ${(own || canEdit) ? `<button class="btn btn-ghost btn-sm" data-act="user-pw" data-id="${u.id}">${ic('mail')} إرسال رابط إعادة تعيين كلمة المرور</button>` : ''}
         ${own || self ? `<button class="btn btn-ghost btn-sm" data-act="user-sessions" data-id="${u.id}">${ic('logout')} تسجيل الخروج من جميع الأجهزة</button>` : ''}
@@ -774,8 +479,9 @@ function openUser(u) {
     const sv = m.querySelector('#us-save'); if (sv) sv.onclick = () => {
       const before = {الدور:roleById(u.roleId).name, الفرع:u.branch}; const nr = m.querySelector('#us-role').value;
       if (nr !== u.roleId) { audit('role', u.name, {الدور:roleById(u.roleId).name}, {الدور:roleById(nr).name}); u.roleId = nr; }
-      u.branch = m.querySelector('#us-br').value; if (!m.querySelector('#us-2fa').disabled) u.twoFA = m.querySelector('#us-2fa').checked;
-      const sc = m.querySelector('#us-scope'); if (!sc.disabled) { const rs = roleById(u.roleId).scope; u.scope = sc.checked ? 'assigned' : 'all'; if (u.scope === rs) delete u.scope; }
+      u.branch = m.querySelector('#us-br').value; if (!m.querySelector('#us-2fa').disabled) u.twoFA = m.querySelector('#us-2fa').checked; u.twoFAMethod = m.querySelector('#us-2fam').value;
+      if (needs2FA(u) && !(u.recovery || []).length) u.recovery = recoveryCodes();
+      const sc = m.querySelector('#us-scope'); if (!sc.disabled) { if (sc.value) u.scope = sc.value; else delete u.scope; }
       audit('edit', 'مستخدم: ' + u.name, before, {الدور:roleById(u.roleId).name, الفرع:u.branch}); rerender(); openUser(u); toast('حُفظ');
     };
     const ov = m.querySelector('#ov-save'); if (ov) ov.onclick = () => {
@@ -798,9 +504,21 @@ ACT['user-copy'] = (el) => { if (!ownerOnly()) return; const u = userById(el.dat
   openModal({title:'نسخ صلاحيات موظف آخر', sub:`إلى ${esc(u.name)}`, body:`<div class="form">${fld('cp-from', 'انسخ من', `<select class="input" id="cp-from">${options(S.users.filter(x => x.id !== u.id && x.roleId !== 'owner').map(x => [x.id, `${x.name} — ${roleById(x.roleId).name}`]))}</select>`)}<p class="muted" style="font-size:13px">يُنسخ الدور والتخصيصات ونطاق الطلبات.</p><button class="btn btn-gold" id="cp-s" style="justify-self:start">نسخ</button></div>`,
     onMount:(m) => m.querySelector('#cp-s').onclick = () => { const src = userById(m.querySelector('#cp-from').value); const b = roleById(u.roleId).name; u.roleId = src.roleId; u.overrides = JSON.parse(JSON.stringify(src.overrides || [])); if (src.scope) u.scope = src.scope; else delete u.scope; audit('perm', u.name, {الدور:b}, {نُسخت_من:src.name}); rerender(); openUser(u); toast('نُسخت الصلاحيات'); }}); };
 ACT['user-toggle'] = (el) => { const u = userById(el.dataset.id); if (u.roleId === 'owner') return; if (!isOwner() && !guard('users', 'edit')) return;
-  const was = u.status; u.status = was === 'active' ? 'suspended' : 'active'; if (u.status === 'suspended') u.sessions = [];
-  audit(u.status === 'active' ? 'user_activate' : 'user_suspend', u.name, {الحالة:was === 'active' ? 'نشط' : 'موقوف'}, {الحالة:u.status === 'active' ? 'نشط' : 'موقوف'}); rerender(); openUser(u); toast(u.status === 'active' ? 'فُعّل الحساب' : 'أُوقف الحساب فورًا وأُنهيت جلساته'); };
-ACT['user-unlock'] = (el) => { const u = userById(el.dataset.id); u.locked = false; S.loginFails[u.email] = 0; audit('user_activate', u.name, {الحالة:'مقفل'}, {الحالة:'نشط'}); rerender(); openUser(u); toast('فُتح الحساب'); };
+  if (u.status !== 'active') { u.status = 'active'; audit('user_activate', u.name, {الحالة:'موقوف'}, {الحالة:'نشط'}); rerender(); openUser(u); toast('فُعّل الحساب'); return; }
+  const work = S.requests.filter(r => r.assignee === u.id && !['done', 'approved', 'rejected'].includes(r.status)).length + S.clients.filter(c => c.owner === u.id && !['won', 'lost'].includes(c.status)).length + S.deals.filter(d => d.owner === u.id && ['draft', 'pending', 'returned'].includes(d.status)).length;
+  openModal({title:'إيقاف حساب ' + esc(u.name), sub:'يُوقف فورًا وتُنهى جميع جلساته', body:`<div class="form">${work ? `<div class="notice warn">${ic('alert')}<div>لدى ${esc(u.name)} <b>${work}</b> من الطلبات والعملاء والصفقات المفتوحة. انقلها إلى زميل حتى لا يتوقف العمل.</div></div>
+    ${fld('tr-to', 'نقل العمل إلى', `<select class="input" id="tr-to">${options(S.users.filter(x => x.id !== u.id && x.status === 'active' && x.roleId !== 'owner').map(x => [x.id, `${x.name} — ${roleById(x.roleId).name}`]), S.users.find(x => x.id !== u.id && x.roleId === u.roleId && x.status === 'active')?.id)}</select>`)}` : '<p class="muted">لا يوجد عمل مفتوح مسند إليه.</p>'}
+    ${fld('tr-why', 'سبب الإيقاف (يظهر في السجل)', inp('tr-why', '', 'text', 'placeholder="مثال: إجازة طويلة"'))}<button class="btn btn-danger" id="tr-go" style="justify-self:start">إيقاف الحساب${work ? ' ونقل العمل' : ''}</button></div>`,
+    onMount:(m) => m.querySelector('#tr-go').onclick = () => {
+      const to = m.querySelector('#tr-to')?.value; let n = 0;
+      if (to) { S.requests.forEach(r => { if (r.assignee === u.id && !['done', 'approved', 'rejected'].includes(r.status)) { r.assignee = to; r.history.push({at:new Date().toISOString(), by:me().id, text:`نُقل من ${u.name} إلى ${userName(to)} (إيقاف حساب)`}); n++; } });
+        S.clients.forEach(c => { if (c.owner === u.id && !['won', 'lost'].includes(c.status)) { c.owner = to; c.log.unshift({at:new Date().toISOString(), by:me().id, kind:'status', text:`نُقل إلى ${userName(to)}`}); n++; } });
+        S.deals.forEach(d => { if (d.owner === u.id && ['draft', 'pending', 'returned'].includes(d.status)) { d.owner = to; n++; } });
+        notify(to, 'نُقل إليك عمل زميل', `${n} عنصرًا من ${u.name}`, 'mine'); }
+      u.status = 'suspended'; u.sessions = []; audit('user_suspend', u.name, {الحالة:'نشط'}, {الحالة:'موقوف', السبب:m.querySelector('#tr-why').value || '—', نُقل_إلى:to ? userName(to) : '—'});
+      closeModal(); rerender(); toast(`أُوقف الحساب${n ? ` ونُقل ${n} عنصرًا إلى ${userName(to)}` : ''}`); }});
+};
+ACT['user-unlock'] = (el) => { const u = userById(el.dataset.id); u.locked = false; delete S.loginFails[u.email]; audit('user_activate', u.name, {الحالة:'مقفل'}, {الحالة:'نشط'}); rerender(); openUser(u); toast('فُتح الحساب'); };
 ACT['user-pw'] = (el) => { const u = userById(el.dataset.id); audit('edit', u.name, null, {كلمة_المرور:'أُرسل رابط إعادة التعيين'}); save(); toast('أُرسل رابط إعادة التعيين إلى ' + u.email + ' (محاكاة)'); };
 ACT['user-sessions'] = (el) => { const u = userById(el.dataset.id); const n = (u.sessions || []).length; u.sessions = []; audit('sessions', u.name, {الجلسات:n}, {الجلسات:0}); if (u.id === me().id) { S.session = null; save(); toast('سُجّل خروجك من جميع الأجهزة'); renderAdmin(); closeModal(); return; } rerender(); openUser(u); toast('أُنهيت جميع الجلسات'); };
 ACT['user-del'] = (el) => { const u = userById(el.dataset.id); if (u.roleId === 'owner') return; if (!guard('users', 'delete')) return;
@@ -809,7 +527,7 @@ ACT['user-del'] = (el) => { const u = userById(el.dataset.id); if (u.roleId === 
 /* ---------- settings ---------- */
 VIEWS.settings = () => {
   const own = isOwner(); const ed = can('settings', 'edit'); const tab = UI.settingsTab; const st = S.settings;
-  const tabs = [['general', 'الموقع والتواصل'], ['seo', 'محركات البحث'], ['booking', 'الحجوزات'], ['security', 'الأمان' + (own ? '' : ' 🔒')], ['backup', 'النسخ الاحتياطي' + (own ? '' : ' 🔒')], ['owner', 'الملكية' + (own ? '' : ' 🔒')]];
+  const tabs = [['general', 'الموقع والتواصل'], ['seo', 'محركات البحث'], ['booking', 'الحجز والفوترة'], ['security', 'الأمان' + (own ? '' : ' 🔒')], ['backup', 'النسخ الاحتياطي' + (own ? '' : ' 🔒')], ['owner', 'الملكية' + (own ? '' : ' 🔒')]];
   const dis = ed ? '' : 'disabled'; let body;
   if (['security', 'backup', 'owner'].includes(tab) && !own) body = lockNote('هذا القسم متاح لمالك النظام فقط: إعدادات الحماية والنسخ الاحتياطي ونقل الملكية.');
   else if (tab === 'general') body = panel('بيانات الموقع والتواصل', `<div class="form">
@@ -828,16 +546,24 @@ VIEWS.settings = () => {
     <div class="lang-split">${fld('seo-d-ar', 'الوصف<span class="tag">عربي</span>', `<textarea class="input" id="seo-d-ar" ${dis}>${esc(st.seoDesc.ar)}</textarea>`)}${fld('seo-d-en', 'Description<span class="tag">English</span>', `<textarea class="input" id="seo-d-en" ${dis} dir="ltr">${esc(st.seoDesc.en)}</textarea>`)}</div>
     ${fld('seo-ga', 'معرّف Google Analytics', inp('seo-ga', st.ga, 'text', dis + ' dir="ltr"'), 'يُربط Google Search Console ويُنشأ sitemap.xml وrobots.txt تلقائيًا في النسخة النهائية')}
     ${ed ? `<button class="btn btn-gold" id="seo-save" style="justify-self:start">حفظ</button>` : ''}</div>`);
-  else if (tab === 'booking') body = panel('إعدادات الحجز', `<div class="setting"><div><b>الموافقة اليدوية على حجوزات الموقع</b><span>تبقى الحجوزات «بانتظار الموافقة» حتى يعتمدها موظف الحجوزات</span></div><label class="switchx"><input type="checkbox" checked disabled aria-label="الموافقة اليدوية"><span></span></label></div>
-    <div class="setting"><div><b>تذكير قبل الموعد</b><span>رسالة واتساب أو نصية قبل الموعد بـ 24 ساعة</span></div><label class="switchx"><input type="checkbox" checked ${dis} aria-label="تذكير"><span></span></label></div>
-    <div class="setting"><div><b>سياسة الإلغاء</b><span>${esc(STR.ar.cancel_policy)}</span></div></div>
-    <div class="setting"><div><b>الدفع الإلكتروني</b><span>مدى وApple Pay والبطاقات والفاتورة الإلكترونية — المرحلة الثانية</span></div><span class="chip plain">لاحقًا</span></div>`);
-  else if (tab === 'security') { const sc = S.security; body = `${panel('حماية حسابات الإدارة', `
-    <div class="setting"><div><b>فرض التحقق بخطوتين</b><span>للمالك ومديري العمليات</span></div><label class="switchx"><input type="checkbox" id="sec-2fa" ${sc.require2FA ? 'checked' : ''} aria-label="التحقق بخطوتين"><span></span></label></div>
-    <div class="setting"><div><b>تنبيه المالك عند دخول جديد</b><span>وعند محاولات الدخول المشبوهة</span></div><label class="switchx"><input type="checkbox" id="sec-alert" ${sc.alertNewLogin ? 'checked' : ''} aria-label="تنبيه"><span></span></label></div>
-    <div class="setting"><div><b>قفل الحساب بعد محاولات فاشلة</b><span>عدد المحاولات</span></div><input class="input num" type="number" id="sec-lock" min="3" max="10" value="${sc.lockAfter}" style="width:90px" aria-label="عدد المحاولات"></div>
-    <div class="setting"><div><b>الحد الأدنى لطول كلمة المرور</b><span>مع حروف كبيرة وصغيرة وأرقام ورموز</span></div><input class="input num" type="number" id="sec-pw" min="8" max="32" value="${sc.minPw}" style="width:90px" aria-label="الطول"></div>
-    <div class="setting"><div><b>إنهاء الجلسة بعد عدم النشاط</b><span>بالدقائق</span></div><input class="input num" type="number" id="sec-sess" min="5" max="240" value="${sc.sessionMins}" style="width:90px" aria-label="الدقائق"></div>
+  else if (tab === 'booking') body = panel('الحجز والفوترة', `<div class="notice">${ic('info')}<div>مهلة الحجز المعلّق، ومن يؤكد، وسياسة الإلغاء، والساعات المجانية، وأيام الفوترة والتذكير — كلها في <a href="#admin" data-act="nav" data-k="rules">قواعد العمل</a>.</div></div>
+    <div class="setting"><div><b>الدفع الإلكتروني</b><span>مدى وApple Pay والبطاقات — المرحلة الثانية. حاليًا: تحويل بنكي ورفع الإيصال من بوابة العميل.</span></div><span class="chip plain">لاحقًا</span></div>
+    <div class="setting"><div><b>الربط مع هيئة الزكاة (فاتورة — المرحلة الثانية)</b><span>الفواتير بصيغة متوافقة: رقم تسلسلي، رمز QR، ختم تشفيري، وتسلسل التجزئة. الربط الفعلي مع منصة فاتورة يتم عند الإطلاق.</span></div><span class="chip warn">تجهيز</span></div>`);
+  else if (tab === 'security') { const sc = S.security; const sw = (id, on, l, d) => `<div class="setting"><div><b>${l}</b><span>${d}</span></div><label class="switchx"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} aria-label="${l}"><span></span></label></div>`;
+    const nm = (id, v, l, d, mn, mx) => `<div class="setting"><div><b>${l}</b><span>${d}</span></div><input class="input num" type="number" id="${id}" min="${mn}" max="${mx}" value="${v}" style="width:90px" aria-label="${l}"></div>`;
+    body = `${panel('الدخول والحسابات', `
+    ${sw('sec-2fa', sc.require2FA, 'فرض التحقق بخطوتين', 'إلزامي للمالك والإدارة والمحاسبة، واختياري للمبيعات. تطبيق مصادقة أو رسالة نصية، مع 10 رموز استرداد. ثلاثة رموز خاطئة تلغي محاولة الدخول.')}
+    ${nm('sec-lock', sc.lockAfter, 'قفل مؤقت بعد محاولات فاشلة', `عدد المحاولات خلال ${sc.lockWindow} دقيقة — يُقفل الحساب ${sc.lockMinutes} دقيقة، والرسالة عامة لا تكشف إن كان البريد مسجلًا`, 3, 10)}
+    ${nm('sec-pw', sc.minPw, 'الحد الأدنى لطول كلمة المرور', 'مع حرف كبير ورقم ورمز، ولا يُسمح بإعادة آخر 5 كلمات مرور', 8, 32)}
+    ${nm('sec-sess', sc.sessionMins, 'إنهاء الجلسة بعد عدم النشاط', 'بالدقائق', 5, 240)}
+    ${nm('sec-reset', sc.resetMins, 'صلاحية رابط استعادة كلمة المرور', 'بالدقائق — يُستخدم مرة واحدة فقط', 10, 120)}
+    ${nm('sec-inv', sc.inviteHours, 'صلاحية رابط دعوة الموظف', 'بالساعات', 1, 168)}
+    ${sw('sec-alert', sc.alertNewLogin, 'تنبيه المالك عند دخول جديد', 'وعند محاولات الدخول المشبوهة')}`)}
+    ${panel('حماية البيانات', `
+    ${sw('sec-mask', sc.maskExports, 'إخفاء البيانات الشخصية في التصدير', 'تظهر أرقام الجوال والبريد مخفية جزئيًا في ملفات Excel، وتُسجَّل كل عملية تصدير في سجل العمليات')}
+    ${sw('sec-ip', sc.ipRestrict, 'تقييد دخول لوحة التحكم بعناوين المكتب', 'اختياري — يسمح بالدخول من شبكة المكتب فقط')}
+    <div class="setting"><div><b>عناوين IP المسموح بها</b><span>مثال: 85.154.12.0/24</span></div><input class="input ltr" id="sec-ips" value="${esc(sc.officeIps)}" style="width:180px" aria-label="عناوين IP"></div>
+    <div class="setting"><div><b>استضافة البيانات</b><span>تُستضاف قاعدة البيانات والملفات داخل المملكة العربية السعودية وفق نظام حماية البيانات الشخصية</span></div><span class="chip ok">داخل المملكة</span></div>
     <button class="btn btn-gold" id="sec-save" style="margin-top:12px">حفظ</button>`)}
     ${panel('الجلسات النشطة لجميع المستخدمين', table(['المستخدم', 'الجهاز', 'IP', 'آخر نشاط', ''], S.users.flatMap(u => (u.sessions || []).map((s, i) => `<tr><td>${whoTag(u.id)}</td><td>${esc(s.device)}</td><td class="ltr">${esc(s.ip)}</td><td>${fmtDate(s.at, true)}</td><td>${u.id !== me().id ? `<button class="btn btn-danger btn-xs" data-act="kill-session" data-id="${u.id}" data-i="${i}">إنهاء الجلسة</button>` : '<span class="chip ok">جلستك</span>'}</td></tr>`))), {pad:false})}`; }
   else if (tab === 'backup') body = panel('النسخ الاحتياطي', `${table(['الوقت', 'النوع', 'الحجم', ''], S.backups.map(b => `<tr><td>${fmtDate(b.at, true)}</td><td>${b.kind}</td><td class="num">${b.size}</td><td><button class="btn btn-ghost btn-xs" data-act="bk-restore" data-id="${b.id}">استعادة</button></td></tr>`))}
@@ -857,7 +583,7 @@ AFTER.settings = () => {
   const ar = $('#st-acc-reset'); if (ar) ar.onclick = () => { S.settings.accent = ''; audit('settings', 'اللون الرئيسي', null, {اللون:'الأصلي'}); applyTheme(); rerender(); };
   const ac = $('#st-acc'); if (ac) ac.oninput = () => { document.documentElement.style.setProperty('--gold', ac.value); document.documentElement.style.setProperty('--gold-2', ac.value); };
   const s2 = $('#seo-save'); if (s2) s2.onclick = () => { Object.assign(S.settings, {seoTitle:{ar:g('seo-t-ar'), en:g('seo-t-en')}, seoDesc:{ar:g('seo-d-ar'), en:g('seo-d-en')}, ga:g('seo-ga')}); audit('settings', 'إعدادات محركات البحث'); rerender(); toast('حُفظ'); };
-  const s3 = $('#sec-save'); if (s3) s3.onclick = () => { const sc = S.security; const b = {...sc}; Object.assign(sc, {require2FA:$('#sec-2fa').checked, alertNewLogin:$('#sec-alert').checked, lockAfter:+g('sec-lock') || 5, minPw:+g('sec-pw') || 10, sessionMins:+g('sec-sess') || 30});
+  const s3 = $('#sec-save'); if (s3) s3.onclick = () => { const sc = S.security; const b = {...sc}; Object.assign(sc, {require2FA:$('#sec-2fa').checked, alertNewLogin:$('#sec-alert').checked, lockAfter:+g('sec-lock') || 5, minPw:+g('sec-pw') || 10, sessionMins:+g('sec-sess') || 30, resetMins:+g('sec-reset') || 30, inviteHours:+g('sec-inv') || 48, maskExports:$('#sec-mask').checked, ipRestrict:$('#sec-ip').checked, officeIps:g('sec-ips')});
     audit('settings', 'إعدادات الأمان', {قفل_بعد:b.lockAfter, خطوتين:b.require2FA ? 'نعم' : 'لا'}, {قفل_بعد:sc.lockAfter, خطوتين:sc.require2FA ? 'نعم' : 'لا'}); rerender(); toast('حُفظت إعدادات الأمان'); };
   const ow = $('#ow-go'); if (ow) ow.onclick = () => { if (g('ow-otp') !== OTP) return toast('رمز التحقق غير صحيح', true); const nu = userById(g('ow-to'));
     confirmBox(`نقل ملكية النظام إلى ${esc(nu.name)}؟ لا يمكن التراجع إلا بنقلها مرة أخرى من المالك الجديد.`, () => { const old = me(); old.roleId = 'ops'; nu.roleId = 'owner'; nu.overrides = []; audit('owner', 'ملكية النظام', {المالك:old.name}, {المالك:nu.name}); notify(nu.id, 'أصبحت مالك النظام', 'نُقلت إليك ملكية لوحة التحكم'); rerender(); toast('نُقلت الملكية'); }, 'نقل الملكية'); };

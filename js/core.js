@@ -1,10 +1,10 @@
 /* وصل دائم — core: state, storage, i18n, permissions, audit, requests, UI helpers */
 'use strict';
 
-const STORE_KEY = 'wasl-daim-proto';
+const STORE_KEY = 'wasl-daim-v4';
 const VIEW_ONLY = !!window.VIEW_ONLY;
 let S;
-const UI = { view:'site', admin:'dashboard', portalTab:'requests', reqFilter:{q:'', type:'', status:'', who:''}, crmMode:'board', calRes:'r1', calWeek:0, contentTab:'slides', usersTab:'users', settingsTab:'general', notifTab:'feed', formOpenedAt:0 };
+const UI = { view:'site', admin:'mine', portalTab:'home', reqFilter:{q:'', type:'', status:'', who:''}, crmMode:'board', calRes:'r1', calWeek:0, contentTab:'slides', usersTab:'users', settingsTab:'general', notifTab:'feed', formOpenedAt:0 };
 
 function loadState() {
   if (VIEW_ONLY) { // view-only copy: always the pristine demo data; only UI preferences persist
@@ -14,7 +14,7 @@ function loadState() {
   }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { saved = null; }
-  S = (saved && saved.v === 3) ? saved : seedState();
+  S = (saved && saved.v === 4) ? saved : seedState();
 }
 function save() {
   if (VIEW_ONLY) { try { localStorage.setItem(STORE_KEY + '-view', JSON.stringify({lang:S.lang, theme:S.theme, session:S.session, portal:S.portal})); } catch (e) { /* no storage */ } return; }
@@ -36,6 +36,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&
 const curLang = () => UI.view === 'admin' ? 'ar' : S.lang;
 const t = (k) => (STR[curLang()] && STR[curLang()][k]) || STR.ar[k] || k;
 const L = (o, lang) => o == null ? '' : (typeof o === 'string' ? o : (o[lang || curLang()] || o.ar || ''));
+const tt = (ar, en) => isEn() ? en : ar;
 const uid = (p = 'x') => p + Math.random().toString(36).slice(2, 8);
 const isEn = () => curLang() === 'en';
 const locale = () => isEn() ? 'en-GB' : 'ar-SA-u-nu-latn-ca-gregory';
@@ -50,7 +51,7 @@ function fmtDate(iso, withTime = false, lang) {
 }
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString(locale(), {hour:'numeric', minute:'2-digit'});
 const money = (n) => Math.round(n || 0).toLocaleString('en-US');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
 function ago(iso) {
   const m = Math.round((Date.now() - new Date(iso)) / 6e4);
@@ -139,11 +140,48 @@ function can(mod, act, u = me()) {
   if (ov !== undefined) return ov;
   return (roleById(u.roleId)?.perms || []).includes(key);
 }
-const scopeAssigned = (u = me()) => u && (u.scope || roleById(u.roleId)?.scope) === 'assigned';
+const scopeOf = (u = me()) => u ? (u.scope || roleById(u.roleId)?.scope || 'all') : 'all';
+const scopeAssigned = (u = me()) => scopeOf(u) === 'assigned';
+/* is a record (request / lead / booking / deal) visible to this staff user under their scope? */
+function inScope(rec, ownerKey = 'assignee', u = me()) {
+  const sc = scopeOf(u); if (sc === 'all' || !u) return true;
+  if (sc === 'assigned') return rec[ownerKey] === u.id;
+  return rec[ownerKey] === u.id || (!rec[ownerKey] && (rec.branch || 'main') === u.branch) || (rec.branch || 'main') === u.branch;
+}
 function guard(mod, act, msg) {
   if (can(mod, act)) return true;
   toast(msg || 'لا تملك صلاحية تنفيذ هذه العملية. اطلبها من مالك النظام.', true);
   return false;
+}
+/* ---------- sign-in security (shared by staff and client accounts) ---------- */
+function failRec(email) { const r = S.loginFails[email]; return r && typeof r === 'object' ? r : null; }
+function isLocked(email) { const r = failRec(email); return !!(r && r.lockedUntil && new Date(r.lockedUntil) > new Date()); }
+function lockLeft(email) { const r = failRec(email); if (!r || !r.lockedUntil) return ''; const m = Math.max(1, Math.ceil((new Date(r.lockedUntil) - new Date()) / 6e4)); return `بعد ${m} دقيقة`; }
+function registerFail(email) {
+  const now = Date.now(); const win = S.security.lockWindow * 6e4; let r = failRec(email);
+  if (!r || now - new Date(r.first) > win) r = {n:0, first:new Date(now).toISOString()};
+  r.n++; if (r.n >= S.security.lockAfter) { r.lockedUntil = new Date(now + S.security.lockMinutes * 6e4).toISOString(); r.n = 0; r.first = new Date(now).toISOString(); }
+  S.loginFails[email] = r; return r;
+}
+const clearFails = (email) => { delete S.loginFails[email]; };
+const mandatory2FA = (u) => S.security.require2FA && ['owner', 'ops', 'accountant'].includes(u.roleId);
+const needs2FA = (u) => mandatory2FA(u) || !!u.twoFA;
+const recoveryCodes = () => Array.from({length:10}, () => Math.random().toString(36).slice(2, 6).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase());
+function pwChecks(pw, lang = 'ar') {
+  const en = lang === 'en';
+  return [[pw.length >= S.security.minPw, en ? `At least ${S.security.minPw} characters` : `${S.security.minPw} أحرف على الأقل`], [/[A-Z]/.test(pw), en ? 'One uppercase letter' : 'حرف إنجليزي كبير'],
+    [/\d/.test(pw), en ? 'One number' : 'رقم واحد على الأقل'], [/[^A-Za-z0-9]/.test(pw), en ? 'One symbol (!@#…)' : 'رمز مثل ! أو @ أو #']];
+}
+const pwOk = (pw) => pwChecks(pw).every(c => c[0]);
+/* end idle staff sessions */
+let idleTimer = null; UI.lastAct = Date.now();
+['click', 'keydown', 'touchstart', 'scroll'].forEach(ev => document.addEventListener(ev, () => { UI.lastAct = Date.now(); }, {passive:true}));
+function bindIdle() {
+  clearInterval(idleTimer);
+  idleTimer = setInterval(() => {
+    if (!S.session || UI.view !== 'admin') return;
+    if (Date.now() - UI.lastAct > S.security.sessionMins * 6e4) { audit('logout', 'انتهاء الجلسة لعدم النشاط'); S.session = null; save(); location.hash = 'login'; setTimeout(() => toast(`انتهت الجلسة بعد ${S.security.sessionMins} دقيقة دون نشاط. سجّل الدخول مجددًا.`), 60); }
+  }, 30000);
 }
 const fakeIp = () => '85.154.12.' + (40 + (S.users.findIndex(u => u.id === S.session?.userId) + 1));
 
@@ -152,7 +190,8 @@ const AUDIT_ACTS = {
   login:'تسجيل دخول', logout:'تسجيل خروج', login_fail:'محاولة دخول فاشلة', lock:'إيقاف حساب بسبب المحاولات', create:'إنشاء', edit:'تعديل', delete:'حذف',
   status:'تغيير حالة', assign:'إسناد', note:'ملاحظة داخلية', export:'تصدير بيانات', perm:'تغيير صلاحيات', role:'تغيير دور', user_add:'إضافة مستخدم',
   user_del:'حذف مستخدم', user_suspend:'إيقاف حساب', user_activate:'تفعيل حساب', sessions:'إنهاء الجلسات', content:'تعديل محتوى', price:'تعديل أسعار',
-  booking:'حجز', contract:'عقد', payment:'تسجيل دفعة', settings:'تعديل إعدادات', backup:'نسخ احتياطي', owner:'نقل الملكية', file:'رفع ملف', crm:'تحديث عميل'
+  booking:'حجز', contract:'عقد', payment:'تسجيل دفعة', settings:'تعديل إعدادات', backup:'نسخ احتياطي', owner:'نقل الملكية', file:'رفع ملف', crm:'تحديث عميل',
+  deal:'صفقة', approve:'اعتماد', invoice:'فاتورة', company:'منشأة', verify:'تحقق مستندات', invite:'دعوة موظف', rules:'قواعد العمل', pw_reset:'استعادة كلمة المرور', twofa:'التحقق بخطوتين', portal:'بوابة العميل'
 };
 function audit(act, target, before = null, after = null, by) {
   S.audit.unshift({at:new Date().toISOString(), by:by || S.session?.userId || 'system', ip:by === 'system' ? 'موقع عام' : fakeIp(), act, target, before, after});
@@ -165,7 +204,7 @@ const myNotifs = () => S.notifs.filter(n => n.to === me()?.id);
 
 /* ---------- business logic shared by site, portal and admin ---------- */
 const resById = (id) => S.resources.find(r => r.id === id);
-const activeBooking = (b) => b.status !== 'cancelled' && b.status !== 'rejected';
+const activeBooking = (b) => !['cancelled', 'rejected', 'expired'].includes(b.status);
 function bookingConflict(resourceId, start, end, people = 1, excludeId = null) {
   const r = resById(resourceId); if (!r) return null;
   const s = new Date(start), e = new Date(end);
@@ -189,43 +228,41 @@ function bookingPrice(v) {
   if (code) p = p * (1 - code.pct / 100);
   return Math.round(p);
 }
-function routeAssignee(type) {
-  const by = (roleId) => S.users.find(u => u.roleId === roleId && u.status === 'active')?.id || null;
-  if (type === 'booking') return by('bookings') || by('staff');
-  if (['incubator', 'event', 'contact'].includes(type)) return by('staff');
-  return by('ops');
+function routeAssignee(type, branch = 'main') {
+  const by = (roleId) => (S.users.find(u => u.roleId === roleId && u.status === 'active' && u.branch === branch) || S.users.find(u => u.roleId === roleId && u.status === 'active'))?.id || null;
+  const team = REQ_TYPES[type]?.team;
+  if (team === 'ops' || ['accelerator', 'investor', 'opportunity'].includes(type)) return by('ops');
+  return by('staff');
 }
 function upsertClient(r, assignee) {
   let c = S.clients.find(x => (r.email && x.email === r.email) || (r.phone && x.phone === r.phone));
-  if (c) { c.log.unshift({at:new Date().toISOString(), by:'system', kind:'web', text:`طلب جديد من الموقع: ${REQ_TYPES[r.type].ar} (${r.id})`}); return c; }
-  c = {id:uid('c'), name:r.name, phone:r.phone, email:r.email, company:r.data.company || r.data.org || '', service:r.type, source:r.source || 'web', status:'new',
-       owner:assignee, nextFollow:today(), createdAt:new Date().toISOString(), log:[{at:new Date().toISOString(), by:'system', kind:'web', text:`أول تواصل عبر نموذج «${REQ_TYPES[r.type].ar}» (${r.id})`}], notes:''};
+  const now = new Date().toISOString();
+  if (c) { c.log.unshift({at:now, by:'system', kind:'web', text:`طلب جديد: ${REQ_TYPES[r.type].ar} (${r.id})`}); if (c.status === 'lost') { c.status = assignee ? 'assigned' : 'new'; c.closeReason = ''; } return c; }
+  c = {id:uid('c'), name:r.name, phone:r.phone, email:r.email, company:r.data.company || r.data.org || '', service:r.type, source:r.source || 'web', status:assignee ? 'assigned' : 'new',
+       owner:assignee, branch:r.branch || 'main', nextFollow:today(), createdAt:now, lastContactAt:null, closeReason:'', companyId:r.companyId || null,
+       log:[{at:now, by:'system', kind:'web', text:`أول تواصل عبر «${REQ_TYPES[r.type].ar}» (${r.id})`}], notes:''};
   S.clients.unshift(c); return c;
 }
-function createRequest(type, v, files = []) {
-  const id = 'WD-' + (++S.seq);
-  const assignee = routeAssignee(type);
+function createRequest(type, v, files = [], opts = {}) {
+  const id = nextNo('REQ');
+  const branch = v.branch || opts.branch || 'main';
+  const assignee = opts.assignee !== undefined ? opts.assignee : routeAssignee(type, branch);
   const data = Object.assign({}, v); ['name', 'phone', 'email', 'source', 'consent', 'website_hp'].forEach(k => delete data[k]);
-  const r = {id, type, status:'new', assignee, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), name:v.name, phone:v.phone, email:v.email,
-    source:v.source || 'web', data, files, notes:[], comms:[], history:[{at:new Date().toISOString(), by:'system', text:'استُلم الطلب من الموقع'}]};
+  const r = {id, type, status:'new', assignee, branch, companyId:opts.companyId || null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), name:v.name, phone:v.phone, email:v.email,
+    source:v.source || 'web', data, files, notes:[], comms:[], history:[{at:new Date().toISOString(), by:opts.by || 'system', text:opts.portal ? 'أُرسل الطلب من بوابة العميل' : 'استُلم الطلب من الموقع'}]};
   if (assignee) r.history.push({at:new Date().toISOString(), by:'system', text:`أُسند تلقائيًا إلى ${userName(assignee)} حسب قواعد التوزيع`});
-  if (type === 'booking') {
-    const {start, end} = bookingRange(v);
-    S.bookings.push({id:uid('b'), reqId:id, resourceId:v.resource, start:start.toISOString(), end:end.toISOString(), name:v.name, phone:v.phone, email:v.email,
-      people:+v.people || 1, status:'pending', code:v.code || '', price:bookingPrice(v), by:'web', createdAt:new Date().toISOString(), notes:v.notes || '', unit:v.unit});
-  }
   if (type === 'event') {
     const ev = S.content.events.find(e => e.id === v.event);
     if (ev) { if (ev.taken < ev.seats) ev.taken++; else { r.data.waitlist = true; ev.waitlist = (ev.waitlist || 0) + 1; } }
   }
   S.requests.unshift(r);
-  upsertClient(r, assignee);
+  if (!opts.portal) upsertClient(r, assignee);
   const label = REQ_TYPES[type].ar;
   if (assignee) notify(assignee, `أُسند إليك طلب جديد: ${label}`, `${id} — ${v.name}`, 'requests');
   S.users.filter(u => u.status === 'active' && (u.roleId === 'ops' || u.roleId === 'owner') && u.id !== assignee).forEach(u => notify(u.id, `طلب جديد: ${label}`, `${id} — ${v.name}`, 'requests'));
   (S.outbox = S.outbox || []).unshift({at:new Date().toISOString(), to:S.settings.notifyEmail, subject:`طلب جديد ${id} — ${label}`, channel:'email'},
     {at:new Date().toISOString(), to:v.email, subject:fillTpl('req_client', {name:v.name, ref:id}), channel:'email'});
-  const cust = S.customers.find(c => c.email === v.email);
+  const cust = S.customers.find(c => c.email === v.email) || (opts.customerId && custById(opts.customerId));
   if (cust) cust.notifs.unshift({at:new Date().toISOString(), text:`استلمنا طلبك ${id} (${label}).`});
   audit('create', id, null, {النوع:label, الإسناد:userName(assignee)}, 'system');
   save();
@@ -241,11 +278,6 @@ function setReqStatus(r, status, by) {
   audit('status', r.id, {الحالة:before}, {الحالة:REQ_STATUS[status].ar});
   const cust = S.customers.find(c => c.email === r.email);
   if (cust) cust.notifs.unshift({at:r.updatedAt, text:`تم تحديث حالة طلبك ${r.id} إلى «${REQ_STATUS[status].ar}».`});
-  if (r.type === 'booking') {
-    const b = S.bookings.find(x => x.reqId === r.id);
-    if (b && status === 'approved') b.status = 'confirmed';
-    if (b && status === 'rejected') b.status = 'rejected';
-  }
 }
 
 /* ---------- export helper (CSV for Excel) ---------- */
@@ -254,6 +286,7 @@ function toCSV(rows) {
 }
 function exportDialog(title, rows, mod) {
   if (!guard(mod, 'export', 'لا تملك صلاحية تصدير البيانات.')) return;
+  if (S.security.maskExports) rows = rows.map((r, i) => i === 0 ? r : r.map(c => typeof c === 'string' && /^(05\d{8}|\+?9665\d{8})$/.test(c) ? maskPhone(c) : typeof c === 'string' && /^[^\s@]+@[^\s@]+$/.test(c) ? maskEmail(c) : c));
   const csv = toCSV(rows);
   audit('export', title + ' (Excel)', null, {الصفوف:rows.length - 1});
   save();
@@ -284,12 +317,16 @@ function readImage(file, maxW = 1400) {
 const VIEW_MSG = 'نسخة عرض فقط — التعديل غير متاح';
 const BLOCKED_ACTS = new Set(['reset-data', 'req-export', 'req-decide', 'req-del', 'crm-export', 'booking-export', 'bk-status', 'contract-export', 'ev-pub', 'ev-export',
   'ce-del', 'ce-move', 'rep-export', 'audit-export', 'role-save', 'role-reset', 'role-del', 'ov-del', 'user-reset', 'user-toggle', 'user-unlock', 'user-pw',
-  'user-sessions', 'user-del', 'kill-session', 'bk-now', 'bk-restore', 'p-cancel']);
-const SAFE_IDS = new Set(['rq-q', 'rq-type', 'rq-who', 'au-who', 'au-act', 'cal-res', 'acct-switch']);
+  'user-sessions', 'user-del', 'kill-session', 'bk-now', 'bk-restore', 'p-cancel',
+  'deal-submit', 'deal-save', 'deal-decide', 'k-sign', 'k-activate', 'co-doc', 'co-verify', 'co-suspend', 'co-change', 'inv-issue', 'inv-issue-all', 'inv-send',
+  'pay-decide', 'aging-remind', 'bkx-confirm', 'lead-stage', 'gen-drafts', 'p-book-send',
+  'p-remove', 'reg-submit', 'invite-resend', 'space-save', 'rules-save', 'tfa-reset',
+  'co-export', 'vat-export', 'inv-export', 'rep-sales', 'rep-sources', 'k-remind', 'co-doc-remind', 'branch-add']);
+const SAFE_IDS = new Set(['rq-q', 'rq-type', 'rq-who', 'au-who', 'au-act', 'cal-res', 'acct-switch', 'co-q', 'co-st', 'inv-f', 'dl-f', 'ws-branch', 'ws-people', 'ws-months', 'ws-online', 'vat-q', 'pb-branch', 'pb-room', 'pb-day']);
 function lockUI(root) {
   if (!VIEW_ONLY || !root) return;
   root.querySelectorAll('button, input, select, textarea').forEach(el => {
-    if (el.closest('form[data-form], #login-form, #otp-form, #fg, #pf')) return;
+    if (el.closest('form[data-form], #login-form, #otp-form, #fg, #pf, [data-viewsafe]')) return;
     if (SAFE_IDS.has(el.id)) return;
     const act = el.dataset.act;
     if (act && !BLOCKED_ACTS.has(act)) return;
@@ -299,16 +336,19 @@ function lockUI(root) {
 
 /* ---------- routing ---------- */
 const ACT = {};
+const PAGE_VIEWS = ['login', 'register', 'workspaces', 'privacy', 'terms', 'activate', 'reset'];
 function route() {
   const h = location.hash.replace('#', '');
-  const view = h === 'admin' ? 'admin' : h === 'portal' ? 'portal' : 'site';
+  const view = h === 'admin' ? 'admin' : h === 'portal' ? 'portal' : PAGE_VIEWS.includes(h) ? h : 'site';
   const changed = view !== UI.view || !$('#app').children.length;
   UI.view = view;
+  if (typeof tickBusiness === 'function') tickBusiness();
   if (view === 'admin') { applyLangDir(true); renderAdmin(); }
-  else if (view === 'portal') { applyLangDir(); renderPortal(); }
+  else if (view === 'portal') { if (changed) window.scrollTo(0, 0); applyLangDir(); renderPortal(); }
+  else if (view !== 'site') { window.scrollTo(0, 0); applyLangDir(); renderPage(view); window.scrollTo(0, 0); }
   else {
     applyLangDir();
-    if (changed || !$('.site-header')) renderSite();
+    if (changed || !$('.site-header') || $('main[data-page]')) renderSite();
     if (h) { const el = document.getElementById(h); if (el) setTimeout(() => el.scrollIntoView({behavior:changed ? 'auto' : 'smooth'}), changed ? 30 : 0); }
     else if (changed) window.scrollTo(0, 0);
   }
